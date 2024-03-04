@@ -133,9 +133,11 @@ add_action('template_redirect', 'custom_login_handler');
 add_action('init', 'custom_direct_login');
 function custom_direct_login() {
     if (isset($_GET['direct-login']) && $_GET['direct-login'] == 'true') {
-        $username = $_GET['username'];
-        $password = $_GET['password'];
-
+        $username = sanitize_user($_GET['username']);
+        $password = $_GET['password']; // Passwords are hashed in the database, so sanitization is not necessary
+        $email = sanitize_email($_GET['useremail']);
+        $first_name = sanitize_text_field($_GET['userfname']);
+        $last_name = sanitize_text_field($_GET['userlname']);
         $user = wp_authenticate($username, $password);
 
         if (!is_wp_error($user)) {
@@ -143,16 +145,17 @@ function custom_direct_login() {
             wp_set_current_user($user->ID);
             wp_set_auth_cookie($user->ID);
 
-            // Redirect after successful login to the homepage or dashboard as needed
+            // Redirect after successful login
             wp_redirect(home_url());
             exit;
         } else {
-            // Handle login error (optional)
-            wp_redirect(home_url() . '/login-error'); // Redirect to a custom error page (you need to create this)
+            // Handle login error
+            wp_redirect(home_url() . '/login-error'); // Redirect to a custom error page
             exit;
         }
     }
 }
+
 
 
 // Utility functions for encryption and decryption.
