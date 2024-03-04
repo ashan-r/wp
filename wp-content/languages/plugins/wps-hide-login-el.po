@@ -1,0 +1,118 @@
+# Translation of Plugins - WPS Hide Login - Stable (latest release) in Greek
+# This file is distributed under the same license as the Plugins - WPS Hide Login - Stable (latest release) package.
+msgid ""
+msgstr ""
+"PO-Revision-Date: 2022-12-09 23:07:57+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: GlotPress/4.0.0-alpha.9\n"
+"Language: el_GR\n"
+"Project-Id-Version: Plugins - WPS Hide Login - Stable (latest release)\n"
+
+#. Author of the plugin
+msgid "WPServeur, NicolasKulka, wpformation"
+msgstr "WPServeur, NicolasKulka, wpformation"
+
+#: classes/plugin.php:417
+msgid "Redirect URL when someone tries to access the wp-login.php page and the wp-admin directory while not logged in."
+msgstr "Ανακατευθείνει το URL όταν κάποιος προσπαθεί να αποκτήσει πρόσβαση στη σελίδα wp-login.php και στον κατάλογο wp-admin ενώ δεν είναι συνδεδεμένος."
+
+#: classes/plugin.php:402
+msgid "Protect your website by changing the login URL and preventing access to the wp-login.php page and the wp-admin directory to non-connected people."
+msgstr "Προστατεύει τον ιστότοπό σας αλλάζοντας τη διεύθυνση URL σύνδεσης και αποτρέποντας την πρόσβαση στη σελίδα wp-login.php και στον κατάλογο wp-admin σε μη συνδεδεμένα άτομα."
+
+#: classes/plugin.php:373
+msgid "WPS Limit Login"
+msgstr "WPS Limit Login"
+
+#: classes/plugin.php:373
+msgid "and"
+msgstr "και"
+
+#: classes/plugin.php:372
+msgid "WPS Cleaner"
+msgstr "WPS Cleaner"
+
+#: classes/plugin.php:371
+msgid "WPS Bidouille"
+msgstr "WPS Bidouille"
+
+#: classes/plugin.php:371 classes/plugin.php:372
+msgid "the plugin"
+msgstr "Το πρόσθετο"
+
+#: classes/plugin.php:370
+msgid "Discover our other plugins:"
+msgstr "Ανακαλύψτε και τα άλλα μας πρόσθετα:"
+
+#: classes/plugin.php:369
+msgid "WordPress specialized hosting"
+msgstr "Εξειδικευμένη φιλοξενία WordPress"
+
+#: classes/plugin.php:296
+msgid "Redirection url"
+msgstr "Ανακατεύθυνση url"
+
+#: classes/plugin.php:245
+msgid "Redirection url default"
+msgstr "Προεπιλογή διεύθυνσης url ανακατεύθυνσης"
+
+#. Author URI of the plugin
+msgid "https://wpserveur.net"
+msgstr "https://wpserveur.net"
+
+#: classes/plugin.php:521
+msgid "This has been disabled"
+msgstr "Η επιλογή εχει απενεργοποιηθεί "
+
+#. Description of the plugin
+msgid "Protect your website by changing the login URL and preventing access to wp-login.php page and wp-admin directory while not logged-in"
+msgstr "Προστάτεψτε τον ιστότοπό σας με την αλλαγή του URL σύνδεσης και αποτρέψτε την πρόσβαση στην σελίδα wp-login.php και wp-admin όταν δεν είστε συνδεμενος"
+
+#: classes/plugin.php:479
+msgid "This feature is not enabled."
+msgstr "Αυτή η λειτουργία δεν έχει ενεργοποιηθεί."
+
+#: classes/plugin.php:442 classes/plugin.php:446
+msgid "Settings"
+msgstr "Ρυθμίσεις"
+
+#: classes/plugin.php:431
+msgid "Your login page is now here: <strong><a href=\"%1$s\">%2$s</a></strong>. Bookmark this page!"
+msgstr "Η σελίδα σύνδεσης σας είναι τώρα εδώ: <strong><a href=\"%1$s\">%2$s</a></strong>. Προσθήκη στους σελιδοδείκτες!"
+
+#: classes/plugin.php:382
+msgid "To set a networkwide default, go to <a href=\"%s\">Network Settings</a>."
+msgstr "Για να ορίσετε μια προεπιλογή σε όλο το δίκτυο, μεταβείτε στις <a href=\"%s\">Ρυθμίσεις δικτύου</a>."
+
+#: classes/plugin.php:288
+msgid "Login url"
+msgstr "URL Σύνδεσης"
+
+#: classes/plugin.php:243
+msgid "Networkwide default"
+msgstr "Προεπιλογή Ευρέως Δικτύου "
+
+#: classes/plugin.php:240 classes/plugin.php:369
+msgid "Need help? Try the <a href=\"%1$s\" target=\"_blank\">support forum</a>. This plugin is kindly brought to you by <a href=\"%2$s\" target=\"_blank\">WPServeur</a>"
+msgstr "Χρειάζεστε βοήθεια; Δοκιμάστε το <a href=\"%1$s\" target=\"_blank\">φόρουμ υποστήριξης</a>. Αυτό το πρόσθετο το προσφέρει το <a href=\"%2$s\" target=\"_blank\">WPServeur</a>."
+
+#: classes/plugin.php:239
+msgid "This option allows you to set a networkwide default, which can be overridden by individual sites. Simply go to to the site’s permalink settings to change the url."
+msgstr "Αυτή η επιλογή σας επιτρέπει να ορίσετε μιά προεπιλογή ευρέως δικτύου, η οποία μπορεί να παρακαμφθεί από επιμέρους ιστοτόπους. Απλά πηγαίνετε στις ρυθμίσεις των μόνιμων συνδέσμων της ιστοσελίδας για να αλλάξετε το url. "
+
+#: classes/plugin.php:221
+msgid "WPS Hide Login could not be activated because you already have Rename wp-login.php active. Please uninstall rename wp-login.php to use WPS Hide Login"
+msgstr "WPS Hide Login δεν μπόρεσε να ενεργοποιηθεί, επειδή έχετε ήδη το Rename wp-login.php ενεργό. Καταργήστε την εγκατάσταση Rename wp-login.php να χρησιμοποιήσετε WPS Hide Login"
+
+#. Plugin Name of the plugin
+#: classes/plugin.php:215 classes/plugin.php:238 classes/plugin.php:703
+#: classes/plugin.php:712
+msgid "WPS Hide Login"
+msgstr "WPS Hide Login"
+
+#: classes/plugin.php:215
+msgid "Please upgrade to the latest version of WordPress to activate"
+msgstr "Παρακαλούμε αναβαθμίστείτε στην τελευταία έκδοση του WordPress για ενεργοποίηση"

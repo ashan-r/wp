@@ -1,0 +1,57 @@
+# Ignore core WordPress files and directories
+/wp-admin/
+/wp-includes/
+/index.php
+/license.txt
+/readme.html
+/wp-activate.php
+/wp-blog-header.php
+/wp-comments-post.php
+/wp-config-sample.php
+/wp-cron.php
+/wp-links-opml.php
+/wp-load.php
+/wp-login.php
+/wp-mail.php
+/wp-settings.php
+/wp-signup.php
+/wp-trackback.php
+/xmlrpc.php
+
+# Ignore default themes
+/wp-content/themes/twenty*/
+
+# Ignore sensitive files
+/wp-config.php
+/.htaccess
+/.env
+
+# Ignore node modules and build directories
+/node_modules/
+/build/
+
+# Ignore common cache directories
+/wp-content/cache/
+/wp-content/upgrade/
+/wp-content/uploads/
+/wp-content/backups/
+/wp-content/ai1wm-backups
+
+# Ignore specific plugins or themes
+/wp-content/plugins/some-plugin/
+/wp-content/themes/some-theme/
+
+# Ignore common file types that should not be tracked
+*.log
+*.sql
+*.tar.gz
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore Composer vendor directory
+/vendor/
+
+# Ignore WP-CLI configuration
+/wp-cli.yml
