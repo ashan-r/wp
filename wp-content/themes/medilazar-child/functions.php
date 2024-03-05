@@ -70,65 +70,10 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 
 
 function custom_login_endpoint() {
-	// echo 'dfdf';
     add_rewrite_endpoint('custom-login', EP_ROOT);
 	flush_rewrite_rules();
 }
 add_action('init', 'custom_login_endpoint');
-
-function custom_login_handler() {
-	// echo 'qqqqqqqqqqqqqqqqqqqqq';
-	// print_r($_GET);
-    if (isset($_GET['username']) && isset($_GET['password'])) {
-        $username = sanitize_text_field($_GET['username']);
-        $password = sanitize_text_field($_GET['password']);
-		// echo $username;
-		// echo $password;
-		
-	
-        // Validate the username and password
-        if (wp_authenticate($username, $password)) {
-			// echo '<pre>';
-			// print_r(wp_authenticate($username, $password));
-
-			// $user_obj = wp_authenticate($username, $password);
-
-
-			$creds = array();
-    $creds['user_login'] = $username;
-    $creds['user_password'] = $password;
-    $creds['remember'] = true;
-    $user = wp_signon( $creds, false );
-    if ( is_wp_error($user) ) {
-       echo $user->get_error_message();
-       die();
-    } else {
-        //  wp_set_auth_cookie( $user, 0, 0);
-		// wp_set_auth_cookie( $user->ID, 0, 0);
-		wp_generate_auth_cookie($user->ID, 1209600);
-		//  print_r($user);
-		 echo wp_generate_auth_cookie($user->ID, 1209600);
-		//  die;
-    }
-
-
-            // Authentication successful, generate a token
-            // $token = wp_generate_auth_cookie($user_obj->ID, 1209600); // 2 weeks
-
-			// print_r($user->ID);
-			// echo get_current_user_id();
-			// echo $token;
-			// die;
-
-            // Redirect to the home page with the token
-            // wp_redirect(home_url('?token=' . $token));
-			wp_redirect(home_url());
-            exit;
-        }
-    }
-}
-add_action('template_redirect', 'custom_login_handler');
-
 
 add_action('init', 'custom_direct_login');
 function custom_direct_login() {
@@ -143,7 +88,11 @@ function custom_direct_login() {
         if (!is_wp_error($user)) {
             wp_clear_auth_cookie();
             wp_set_current_user($user->ID);
-            wp_set_auth_cookie($user->ID);
+	        // Set the login cookie timeout to two weeks
+			// $expiration = time() + (2 * WEEK_IN_SECONDS);
+			// wp_set_auth_cookie($user->ID, true, '', $expiration);
+			wp_set_auth_cookie($user->ID);
+
 
             // Redirect after successful login
             wp_redirect(home_url());
@@ -178,7 +127,7 @@ function get_encryption_iv() {
     return defined('ENCRYPTION_IV') ? ENCRYPTION_IV : null; // Replace with your actual IV
 }
 
-// Custom login logic.
+// Custom Encrypted Login logic.
 add_action('init', 'custom_encrypted_login');
 function custom_encrypted_login() {
 	if (!isset($_GET['direct-login']) || $_GET['direct-login'] != 'true') {
