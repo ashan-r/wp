@@ -69,14 +69,19 @@ function cm_woocommerce_add_to_cart_button_text_single() {
 add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_to_cart_button_text_single' ); 
 
 
-function custom_login_endpoint() {
-    add_rewrite_endpoint('custom-login', EP_ROOT);
+function cm_login_endpoint() {
+    add_rewrite_endpoint('direct-login', EP_ROOT);
 	flush_rewrite_rules();
 }
-add_action('init', 'custom_login_endpoint');
+add_action('init', 'cm_login_endpoint');
 
-add_action('init', 'custom_direct_login');
-function custom_direct_login() {
+add_filter( 'auth_cookie_expiration', function( $duration, $user_id, $remember ) {
+    // Set the cookie to expire after 1 day.
+    return DAY_IN_SECONDS;
+}, 10, 3 );
+
+add_action('init', 'cm_direct_login');
+function cm_direct_login() {
     if (isset($_GET['direct-login']) && $_GET['direct-login'] == 'true') {
         $username = sanitize_user($_GET['username']);
         $password = $_GET['password']; // Passwords are hashed in the database, so sanitization is not necessary
@@ -87,13 +92,8 @@ function custom_direct_login() {
 
         if (!is_wp_error($user)) {
             wp_clear_auth_cookie();
-            wp_set_current_user($user->ID);
-	        // Set the login cookie timeout to two weeks
-			// $expiration = time() + (2 * WEEK_IN_SECONDS);
-			// wp_set_auth_cookie($user->ID, true, '', $expiration);
-			wp_set_auth_cookie($user->ID);
-
-
+            wp_set_current_user($user->ID);		
+			wp_set_auth_cookie($user->ID, true);
             // Redirect after successful login
             wp_redirect(home_url());
             exit;
@@ -104,8 +104,6 @@ function custom_direct_login() {
         }
     }
 }
-
-
 
 // Utility functions for encryption and decryption.
 // Consider moving these to a separate file if you have a utility or helper class.
