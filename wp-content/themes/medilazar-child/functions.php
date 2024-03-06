@@ -168,3 +168,23 @@ function custom_encrypted_login() {
 }
 
 
+// Multiple Cart Session
+
+// Generate a unique cart identifier for each login session
+function generate_cart_identifier() {
+    $user_id = get_current_user_id();
+    $session_token = wp_generate_password(12, false); // Generate a random token
+    return 'cart_' . $user_id . '_' . $session_token;
+}
+
+// Store cart data in the session using the custom cart identifier
+function store_cart_in_session($cart_data) {
+    $cart_identifier = generate_cart_identifier();
+    WC()->session->set($cart_identifier, $cart_data);
+}
+
+// Retrieve cart data from the session using the custom cart identifier
+function get_cart_from_session() {
+    $cart_identifier = generate_cart_identifier();
+    return WC()->session->get($cart_identifier);
+}
