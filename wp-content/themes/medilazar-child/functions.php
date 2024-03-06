@@ -167,8 +167,9 @@ function custom_encrypted_login() {
     }
 }
 
-
-// Multiple Cart Session
+/*
+/////////////  Multiple Cart Session   ///////////////////////
+*/
 
 // Generate a unique cart identifier for each login session
 function generate_cart_identifier() {
@@ -187,4 +188,74 @@ function store_cart_in_session($cart_data) {
 function get_cart_from_session() {
     $cart_identifier = generate_cart_identifier();
     return WC()->session->get($cart_identifier);
+}
+
+
+/*
+/////////////  Punchout XML Processing   ///////////////////////
+*/
+
+// Register the custom rest route
+add_action('rest_api_init', function () {
+    register_rest_route('orbetec/v1', '/puncout_login', array(
+        'methods' => 'POST',
+        'callback' => 'handle_xml_request',
+    ));
+});
+
+
+// Handle Login Request 
+function handle_xml_request(WP_REST_Request $request) {
+    // Get the raw POST data
+    $xml_data = $request->get_body();
+
+    // Load the XML string into a SimpleXMLElement
+    $xml = simplexml_load_string($xml_data);
+
+    // Extract login details
+    $username = (string)$xml->header->login->username;
+    $password = (string)$xml->header->login->password;
+
+    // Perform your authentication logic here
+    // For example, check if the username and password are correct
+
+    // Based on the authentication result, set the response data
+    if ($username == 'qa_commedi5TXFusr' && $password == 'jPZ5amUW6kRM%Osgy)2cHTcg') {
+        $response_data = [
+            'status' => 'success',
+            'message' => 'Login successful',
+        ];
+    } else {
+        $response_data = [
+            'status' => 'error',
+            'message' => 'Login failed',
+        ];
+    }
+
+    // Generate XML response
+    $response_xml = generate_xml_response($response_data);
+
+    // Return the XML response
+    return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
+}
+
+
+function authenticate_user($username, $password) {
+    // Placeholder for authentication logic
+    // Return true if authentication succeeds, false otherwise
+    // This could involve checking the username and password against your database, an external service, etc.
+    return true; // Example: Always return true for demonstration purposes
+}
+
+function generate_xml_response($data) {
+    // Create a SimpleXMLElement object
+    $response = new SimpleXMLElement('<response/>');
+
+    // Add data to the response XML
+    foreach ($data as $key => $value) {
+        $response->addChild($key, $value);
+    }
+
+    // Convert the SimpleXMLElement to a string
+    return $response->asXML();
 }
