@@ -203,8 +203,7 @@ add_action('rest_api_init', function () {
     ));
 });
 
-
-// Handle Login Request 
+// Handle Login Request
 function handle_xml_request(WP_REST_Request $request) {
     // Get the raw POST data
     $xml_data = $request->get_body();
@@ -216,21 +215,26 @@ function handle_xml_request(WP_REST_Request $request) {
     $username = (string)$xml->header->login->username;
     $password = (string)$xml->header->login->password;
 
-    // Perform your authentication logic here
-    // For example, check if the username and password are correct
+    // Use WordPress authentication function to check credentials
+    $user = wp_authenticate($username, $password);
 
-    // Based on the authentication result, set the response data
-    if ($username == 'qa_commedi5TXFusr' && $password == 'jPZ5amUW6kRM%Osgy)2cHTcg') {
-        $response_data = [
-            'status' => 'success',
-            'message' => 'Login successful',
-        ];
-    } else {
-        $response_data = [
-            'status' => 'error',
-            'message' => 'Login failed',
-        ];
-    }
+   // Based on the authentication result, set the response data
+	if (!is_wp_error($user)) {
+		// Authentication was successful, start the WordPress session
+		wp_set_current_user($user->ID); // Set the current user by passing the user ID
+		wp_set_auth_cookie($user->ID); // Set the auth cookie to log the user in
+
+		// Prepare success response data with the login URL
+		$response_data = [
+			'status' => 'success',
+			'message' => 'https://exchange.oracle.com/orders/LinkinCallback.jsp?sessionKey=84vw2wnuq1.ml0Tah9NrkSIrlaIpR9vmQLz/AbJphDGpQbvp6vJqReUbxaPaK--1733&action=shopping&language=US&searchKeywords=',
+		];
+	} else {
+		$response_data = [
+			'status' => 'error',
+			'message' => 'Login failed',
+		];
+	}
 
     // Generate XML response
     $response_xml = generate_xml_response($response_data);
@@ -239,23 +243,28 @@ function handle_xml_request(WP_REST_Request $request) {
     return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
 }
 
+// Function to generate XML response from an array of response data
+function generate_xml_response($response_data) {
+    // Create a new SimpleXMLElement object with the response root element
+    $xml_response = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><response></response>');
 
-function authenticate_user($username, $password) {
-    // Placeholder for authentication logic
-    // Return true if authentication succeeds, false otherwise
-    // This could involve checking the username and password against your database, an external service, etc.
-    return true; // Example: Always return true for demonstration purposes
-}
+    // Add header with version and return code
+    $header = $xml_response->addChild('header');
+    $header->addAttribute('version', '1.0');
+    $return = $header->addChild('return');
+    $return->addAttribute('returnCode', $response_data['status'] == 'success' ? 'S' : 'F'); // Use 'S' for success, 'F' for failure
 
-function generate_xml_response($data) {
-    // Create a SimpleXMLElement object
-    $response = new SimpleXMLElement('<response/>');
-
-    // Add data to the response XML
-    foreach ($data as $key => $value) {
-        $response->addChild($key, $value);
+    // Add body with login URL, only if login was successful
+    if ($response_data['status'] == 'success') {
+        $body = $xml_response->addChild('body');
+        $loginURL = $body->addChild('loginURL');
+        // Use CDATA for URL to ensure special characters are correctly parsed
+        $node = dom_import_simplexml($loginURL);
+        $no = $node->ownerDocument;
+        $node->appendChild($no->createCDATASection($response_data['message']));
     }
 
-    // Convert the SimpleXMLElement to a string
-    return $response->asXML();
+    // Return the XML string
+    return $xml_response->asXML();
 }
+
