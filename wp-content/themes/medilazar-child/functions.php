@@ -205,12 +205,20 @@ add_action('rest_api_init', function () {
 
 // Handle Login Request
 function handle_xml_request(WP_REST_Request $request) {
+    global $wpdb; // Access the WordPress database object
+
     $returnCode = 'U'; // Default to 'Unexpected'
     $response_message = 'An unexpected error occurred.';
     $loginURL = '';
 
     try {
-        $xml_data = $request->get_body();
+        $xml_data = $request->get_param('loginRequest');
+
+        // Check if xml_data is not null
+        if ($xml_data === null) {
+            throw new Exception('No XML data provided.');
+        }
+
         $xml = simplexml_load_string($xml_data);
 
         if (!$xml) {
@@ -219,6 +227,7 @@ function handle_xml_request(WP_REST_Request $request) {
 
         $username = (string)$xml->header->login->username;
         $password = (string)$xml->header->login->password;
+        $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; // Extract userEmail
 
         if (empty($username) || empty($password)) {
             $returnCode = 'A';
@@ -232,20 +241,36 @@ function handle_xml_request(WP_REST_Request $request) {
 
                 $returnCode = 'S';
 
-				 // Generate a unique session key and store it in a transient
-				 $session_key = wp_generate_password(20, false);
-				 $transient_name = 'session_key_' . $user->ID . '_' . time();
-				 set_transient($transient_name, $session_key, DAY_IN_SECONDS); // Expires in 1 day
+                // Generate a unique session key
+                $session_key = wp_generate_password(20, false);
 
-				 update_user_meta($user->ID, 'session_transient_name', $transient_name);
-				 
-				// Construct the login URL with the WordPress site's URL, session key, and additional parameters
-				$loginURL = add_query_arg(array(
-					'sessionKey' => $session_key,
-					'action' => 'shopping',
-					'language' => 'US',
-					'searchKeywords' => urlencode('exampleKeyword') // Ensure proper URL encoding
-				), home_url());
+                // Insert the session key and userEmail into the wp_cm_sessions table
+                $wpdb->insert(
+                    $wpdb->prefix . 'cm_sessions', // Table name
+                    [
+                        'user_id' => $user->ID,
+                        'session_key' => $session_key,
+                        'session_email' => $userEmail, // Use extracted userEmail
+                        'created_at' => current_time('mysql'),
+                        'expires_at' => date('Y-m-d H:i:s', time() + DAY_IN_SECONDS) // Expires in 1 day
+                    ],
+                    [
+                        '%d', // user_id
+                        '%s', // session_key
+                        '%s', // session_email
+                        '%s', // created_at
+                        '%s'  // expires_at
+                    ]
+                );
+
+                // Construct the login URL with the WordPress site's URL, session key, userEmail, and additional parameters
+                $loginURL = add_query_arg(array(
+                    'sessionKey' => $session_key,
+                    'sessionEmail' => urlencode($userEmail), // Include userEmail in the login URL
+                    'action' => 'shopping',
+                    'language' => 'US',
+                    'searchKeywords' => urlencode('exampleKeyword') // Ensure proper URL encoding
+                ), home_url());
 
                 $response_message = ''; // No message needed for success
             } else {
@@ -323,79 +348,146 @@ function generate_xml_response($response_data) {
 add_action('init', 'custom_login_user_with_url_session_key');
 
 function custom_login_user_with_url_session_key() {
-    // Check if the session_key exists in the URL
-    if (isset($_GET['session_key'])) {
-        $session_key = $_GET['session_key'];
-
-        // Validate the session key and log the user in
-        if (custom_login_user_with_session_key($session_key)) {
-            // Redirect to the homepage after successful login
-            wp_redirect(home_url());
-            exit;
-        } else {
-            $login_url = wp_login_url();
-			$redirect_url = add_query_arg('login', 'failed', $login_url);
-			wp_redirect($redirect_url);
-			exit;
-        }
+    if (!isset($_GET['sessionKey']) && !isset($_GET['sessionEmail'])) {
+        return;
     }
-}
 
-function custom_login_user_with_session_key($session_key) {
-    // Assume validate_session_key function is defined and works as previously described
-    $user_id = validate_session_key($session_key);
+	$session_key = sanitize_text_field($_GET['sessionKey']);
+	$session_email = sanitize_email($_GET['sessionEmail']);
+    error_log('Session Key: ' . $session_key .  '  Session Email : '. $session_email); // Debugging
+
+    $user_id = validate_session_key($session_key, $session_email);
+    error_log('User ID: ' . $user_id); // Debugging
 
     if ($user_id) {
+        // The session key is valid, and we have a user ID, so log the user in
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id);
-        return true; // Login successful
-    }
 
-    return false; // Login failed
+		error_log('Auth Cookie Set for User ID: ' . $user_id); // Debugging
+
+
+        // Optionally, clear the session key if it's a one-time use
+        // Consider where and how you store these session keys (transients, user meta, etc.)
+        // and implement appropriate cleanup here.
+
+        // Redirect to the homepage or another desired location after successful login
+        wp_redirect(home_url());
+        exit;
+    } else {
+        // Handle the case where the session key is invalid
+        // For example, redirect to a custom error page or the login page with an error message
+        wp_redirect(add_query_arg('login_error', 'invalid_session_key', wp_login_url()));
+        exit;
+    }
 }
 
-function validate_session_key($provided_session_key) {
-    $users = get_users(array(
-        'meta_key' => 'session_transient_name',
-        'fields' => 'ids', // Only get user IDs to optimize the query.
-    ));
-
-    foreach ($users as $user_id) {
-        $transient_name = get_user_meta($user_id, 'session_transient_name', true);
-        $session_key = get_transient($transient_name);
-
-        if ($session_key === $provided_session_key) {
-            return $user_id;
+add_filter('login_message', 'custom_login_error_message');
+function custom_login_error_message($message) {
+    if (isset($_GET['login_error'])) {
+        $error_code = sanitize_text_field($_GET['login_error']);
+        if ('invalid_session' === $error_code) {
+            $message .= '<div class="error"><p>Invalid session key. Please try again.</p></div>';
+        } elseif ('nonce_failed' === $error_code) {
+            $message .= '<div class="error"><p>Security check failed. Please try again.</p></div>';
         }
     }
-
-    return false; // Return false if no matching session key is found.
+    return $message;
 }
 
-function get_user_by_session_key($session_key) {
-    // Query for users with the 'session_key' meta key matching the provided session key
-    $users = get_users(array(
-        'meta_key'     => 'session_key',
-        'meta_value'   => $session_key,
-        'number'       => 1,
-        'count_total'  => false,
-        'fields'       => 'ids', // Retrieve only the user IDs to improve performance
+
+add_action('init', 'test_custom_login');
+
+function test_custom_login() {
+	
+
+
+    if (isset($_GET['test_login'])) {
+        $user_id = 2; // Example: Use a known user ID.
+        wp_set_current_user($user_id);
+        wp_set_auth_cookie($user_id);
+        wp_redirect(home_url());
+        exit;
+    }
+}
+
+define('CM_SESSION_TABLE_VERSION', '1.0');
+define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
+
+
+function create_cm_session_table() {
+    global $wpdb;
+    $charset_collate = $wpdb->get_charset_collate();
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    
+    // Check if the table already exists
+    $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") == $table_name;
+
+    // Retrieve the currently installed version of the table, if any
+    $installed_ver = get_option(CM_SESSION_TABLE_VERSION_OPTION);
+
+    // Proceed if the table does not exist or if the version has changed
+    if (!$table_exists || $installed_ver != CM_SESSION_TABLE_VERSION) {
+        $sql = "CREATE TABLE $table_name (
+          session_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT UNSIGNED NOT NULL,
+          session_key VARCHAR(255) NOT NULL,
+          session_email VARCHAR(255) NOT NULL,
+          created_at DATETIME NOT NULL,
+          expires_at DATETIME NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES {$wpdb->prefix}users(ID) ON DELETE CASCADE
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+
+        // Update the version in the database
+        update_option(CM_SESSION_TABLE_VERSION_OPTION, CM_SESSION_TABLE_VERSION);
+    }
+}
+
+
+add_action('after_setup_theme', 'create_cm_session_table');
+
+function create_user_session($user_id, $session_email) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    $session_key = wp_generate_password(20, false);
+    $created_at = current_time('mysql');
+    $expires_at = date('Y-m-d H:i:s', strtotime('+1 day')); // Example: 1 day expiration
+
+    $wpdb->insert(
+        $table_name,
+        array(
+            'user_id' => $user_id,
+            'session_key' => $session_key,
+            'session_email' => $session_email,
+            'created_at' => $created_at,
+            'expires_at' => $expires_at,
+        ),
+        array('%d', '%s', '%s', '%s', '%s')
+    );
+
+    return $session_key;
+}
+
+function validate_session_key($session_key, $session_email) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    $current_time = current_time('mysql');
+
+    $session = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $table_name WHERE session_key = %s AND session_email = %s AND expires_at > %s",
+        $session_key,
+        $session_email,
+        $current_time
     ));
 
-    // Check if we found a user
-    if (!empty($users)) {
-        return $users[0]; // Return the first user ID found
+    if (null !== $session) {
+        // Session is valid
+        return $session->user_id;
     }
 
-    return null; // Return null if no matching user was found
-}
-
-
-add_filter('login_message', 'custom_login_failed_message');
-
-function custom_login_failed_message($message) {
-    if (isset($_GET['login']) && $_GET['login'] == 'failed') {
-        $message .= '<div class="error"><p>Invalid session key. Please try again.</p></div>';
-    }
-    return $message;
+    // Invalid session
+    return false;
 }
