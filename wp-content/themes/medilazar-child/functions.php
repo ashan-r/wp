@@ -207,7 +207,7 @@ add_action('rest_api_init', function () {
 function handle_xml_request(WP_REST_Request $request) {
     global $wpdb; // Access the WordPress database object
 
-    $returnCode = 'U'; // Default to 'Unexpected'
+    $returnCode = 'U';
     $response_message = 'An unexpected error occurred.';
     $loginURL = '';
 
@@ -252,7 +252,7 @@ function handle_xml_request(WP_REST_Request $request) {
                         'session_key' => $session_key,
                         'session_email' => $userEmail, // Use extracted userEmail
                         'created_at' => current_time('mysql'),
-                        'expires_at' => date('Y-m-d H:i:s', time() + DAY_IN_SECONDS) // Expires in 1 day
+						'expires_at' => date('Y-m-d H:i:s', time() + 60 * 60 * 24) // Expires in 1 day
                     ],
                     [
                         '%d', // user_id
@@ -375,10 +375,10 @@ function custom_login_user_with_url_session_key() {
         wp_redirect(home_url());
         exit;
     } else {
-        // Handle the case where the session key is invalid
-        // For example, redirect to a custom error page or the login page with an error message
-        wp_redirect(add_query_arg('login_error', 'invalid_session_key', wp_login_url()));
-        exit;
+		wp_logout();
+		// Redirect to the WordPress main URL
+		wp_redirect(home_url());
+		exit;
     }
 }
 
