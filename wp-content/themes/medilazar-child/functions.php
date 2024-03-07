@@ -68,6 +68,9 @@ function cm_woocommerce_add_to_cart_button_text_single() {
 }
 add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_to_cart_button_text_single' ); 
 
+/*
+/////////////  Direct Login  ///////////////////////
+*/
 
 function cm_login_endpoint() {
     add_rewrite_endpoint('direct-login', EP_ROOT);
@@ -106,30 +109,6 @@ function cm_direct_login() {
 }
 
 /*
-/////////////  Multiple Cart Session   ///////////////////////
-*/
-
-// Generate a unique cart identifier for each login session
-function generate_cart_identifier() {
-    $user_id = get_current_user_id();
-    $session_token = wp_generate_password(12, false); // Generate a random token
-    return 'cart_' . $user_id . '_' . $session_token;
-}
-
-// Store cart data in the session using the custom cart identifier
-function store_cart_in_session($cart_data) {
-    $cart_identifier = generate_cart_identifier();
-    WC()->session->set($cart_identifier, $cart_data);
-}
-
-// Retrieve cart data from the session using the custom cart identifier
-function get_cart_from_session() {
-    $cart_identifier = generate_cart_identifier();
-    return WC()->session->get($cart_identifier);
-}
-
-
-/*
 /////////////  Punchout XML Processing   ///////////////////////
 */
 
@@ -141,9 +120,9 @@ add_action('rest_api_init', function () {
     ));
 });
 
-// Handle Login Request
+// Handle Login XML Request
 function handle_xml_request(WP_REST_Request $request) {
-    global $wpdb; // Access the WordPress database object
+    global $wpdb; // Access the WordPress DB
 
     $returnCode = 'U';
     $response_message = 'An unexpected error occurred.';
@@ -171,50 +150,59 @@ function handle_xml_request(WP_REST_Request $request) {
             $returnCode = 'A';
             $response_message = 'Username or password missing.';
         } else {
-            $user = wp_authenticate($username, $password);
 
-            if (!is_wp_error($user)) {
-                wp_set_current_user($user->ID);
-                wp_set_auth_cookie($user->ID);
+			// Check if the user exists
+			if (!username_exists($username)) {
+				$returnCode = 'A';
+				$response_message = 'User does not exist.';
+			} else {
+				$user = wp_authenticate($username, $password);
+				$user = wp_authenticate($username, $password);
 
-                $returnCode = 'S';
-
-                // Generate a unique session key
-                $session_key = wp_generate_password(20, false);
-
-                // Insert the session key and userEmail into the wp_cm_sessions table
-                $wpdb->insert(
-                    $wpdb->prefix . 'cm_sessions', // Table name
-                    [
-                        'user_id' => $user->ID,
-                        'session_key' => $session_key,
-                        'session_email' => $userEmail, // Use extracted userEmail
-                        'created_at' => current_time('mysql'),
-						'expires_at' => date('Y-m-d H:i:s', time() + 60 * 60 * 24) // Expires in 1 day
-                    ],
-                    [
-                        '%d', // user_id
-                        '%s', // session_key
-                        '%s', // session_email
-                        '%s', // created_at
-                        '%s'  // expires_at
-                    ]
-                );
-
-                // Construct the login URL with the WordPress site's URL, session key, userEmail, and additional parameters
-                $loginURL = add_query_arg(array(
-                    'sessionKey' => $session_key,
-                    'sessionEmail' => urlencode($userEmail), // Include userEmail in the login URL
-                    'action' => 'shopping',
-                    'language' => 'US',
-                    'searchKeywords' => urlencode('exampleKeyword') // Ensure proper URL encoding
-                ), home_url());
-
-                $response_message = ''; // No message needed for success
-            } else {
-                $returnCode = 'A';
-                $response_message = 'Authentication Failure';
-            }
+				if (!is_wp_error($user)) {
+					wp_set_current_user($user->ID);
+					wp_set_auth_cookie($user->ID);
+	
+					$returnCode = 'S';
+	
+					// Generate a unique session key
+					$session_key = wp_generate_password(20, false);
+	
+					// Insert the session key and userEmail into the wp_cm_sessions table
+					$wpdb->insert(
+						$wpdb->prefix . 'cm_sessions', 
+						[
+							'user_id' => $user->ID,
+							'session_key' => $session_key,
+							'session_email' => $userEmail, 
+							'created_at' => current_time('mysql'),
+							'expires_at' => date('Y-m-d H:i:s', time() + 60 * 60 * 24)
+						],
+						[
+							'%d', // user_id
+							'%s', // session_key
+							'%s', // session_email
+							'%s', // created_at
+							'%s'  // expires_at
+						]
+					);
+	
+					// Construct the login URL with the WordPress site's URL, session key, userEmail, and additional parameters
+					$loginURL = add_query_arg(array(
+						'sessionKey' => $session_key, 
+						'sessionEmail' => $userEmail,                        
+						'action' => 'shopping',
+						'language' => 'US',
+						'searchKeywords' => urlencode($userEmail) // Ensure proper URL encoding
+					), home_url());
+	
+					$response_message = ''; // No message needed for success
+				} else {
+					$returnCode = 'A';
+					$response_message = 'Authentication Failure';
+				}
+			}
+        
         }
     } catch (Exception $e) {
         $response_message = $e->getMessage();
@@ -280,18 +268,16 @@ function generate_xml_response($response_data) {
 }
 
 
-
-
 //  Log In user using Login URL
-add_action('init', 'custom_login_user_with_url_session_key');
+add_action('init', 'cm_login_user_with_url_session_key');
 
-function custom_login_user_with_url_session_key() {
-    if (!isset($_GET['sessionKey']) && !isset($_GET['sessionEmail'])) {
+function cm_login_user_with_url_session_key() {
+    if (!isset($_GET['sessionKey']) && !isset($_GET['searchKeywords'])) {
         return;
     }
 
 	$session_key = sanitize_text_field($_GET['sessionKey']);
-	$session_email = sanitize_email($_GET['sessionEmail']);
+	$session_email = sanitize_email($_GET['searchKeywords']);
     error_log('Session Key: ' . $session_key .  '  Session Email : '. $session_email); // Debugging
 
     $user_id = validate_session_key($session_key, $session_email);
@@ -304,12 +290,7 @@ function custom_login_user_with_url_session_key() {
 
 		error_log('Auth Cookie Set for User ID: ' . $user_id); // Debugging
 
-
-        // Optionally, clear the session key if it's a one-time use
-        // Consider where and how you store these session keys (transients, user meta, etc.)
-        // and implement appropriate cleanup here.
-
-        // Redirect to the homepage or another desired location after successful login
+        // Redirect to the homepage on Login Success
         wp_redirect(home_url());
         exit;
     } else {
@@ -320,8 +301,8 @@ function custom_login_user_with_url_session_key() {
     }
 }
 
-add_filter('login_message', 'custom_login_error_message');
-function custom_login_error_message($message) {
+add_filter('login_message', 'cm_login_error_message');
+function cm_login_error_message($message) {
     if (isset($_GET['login_error'])) {
         $error_code = sanitize_text_field($_GET['login_error']);
         if ('invalid_session' === $error_code) {
@@ -333,21 +314,6 @@ function custom_login_error_message($message) {
     return $message;
 }
 
-
-add_action('init', 'test_custom_login');
-
-function test_custom_login() {
-	
-
-
-    if (isset($_GET['test_login'])) {
-        $user_id = 2; // Example: Use a known user ID.
-        wp_set_current_user($user_id);
-        wp_set_auth_cookie($user_id);
-        wp_redirect(home_url());
-        exit;
-    }
-}
 
 define('CM_SESSION_TABLE_VERSION', '1.0');
 define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
@@ -386,28 +352,6 @@ function create_cm_session_table() {
 
 
 add_action('after_setup_theme', 'create_cm_session_table');
-
-function create_user_session($user_id, $session_email) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'cm_sessions';
-    $session_key = wp_generate_password(20, false);
-    $created_at = current_time('mysql');
-    $expires_at = date('Y-m-d H:i:s', strtotime('+1 day')); // Example: 1 day expiration
-
-    $wpdb->insert(
-        $table_name,
-        array(
-            'user_id' => $user_id,
-            'session_key' => $session_key,
-            'session_email' => $session_email,
-            'created_at' => $created_at,
-            'expires_at' => $expires_at,
-        ),
-        array('%d', '%s', '%s', '%s', '%s')
-    );
-
-    return $session_key;
-}
 
 function validate_session_key($session_key, $session_email) {
     global $wpdb;
