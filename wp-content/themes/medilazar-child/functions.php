@@ -231,7 +231,22 @@ function handle_xml_request(WP_REST_Request $request) {
                 wp_set_auth_cookie($user->ID);
 
                 $returnCode = 'S';
-                $loginURL = 'https://exchange.oracle.com/orders/LinkinCallback.jsp?sessionKey=84vw2wnuq1.ml0Tah9NrkSIrlaIpR9vmQLz/AbJphDGpQbvp6vJqReUbxaPaK--1733&action=shopping&language=US&searchKeywords=';
+
+				 // Generate a unique session key and store it in a transient
+				 $session_key = wp_generate_password(20, false);
+				 $transient_name = 'session_key_' . $user->ID . '_' . time();
+				 set_transient($transient_name, $session_key, DAY_IN_SECONDS); // Expires in 1 day
+
+				 update_user_meta($user->ID, 'session_transient_name', $transient_name);
+				 
+				// Construct the login URL with the WordPress site's URL, session key, and additional parameters
+				$loginURL = add_query_arg(array(
+					'sessionKey' => $session_key,
+					'action' => 'shopping',
+					'language' => 'US',
+					'searchKeywords' => urlencode('exampleKeyword') // Ensure proper URL encoding
+				), home_url());
+
                 $response_message = ''; // No message needed for success
             } else {
                 $returnCode = 'A';
@@ -299,4 +314,88 @@ function generate_xml_response($response_data) {
     }
 
     return $dom->saveXML();
+}
+
+
+
+
+//  Log In user using Login URL
+add_action('init', 'custom_login_user_with_url_session_key');
+
+function custom_login_user_with_url_session_key() {
+    // Check if the session_key exists in the URL
+    if (isset($_GET['session_key'])) {
+        $session_key = $_GET['session_key'];
+
+        // Validate the session key and log the user in
+        if (custom_login_user_with_session_key($session_key)) {
+            // Redirect to the homepage after successful login
+            wp_redirect(home_url());
+            exit;
+        } else {
+            $login_url = wp_login_url();
+			$redirect_url = add_query_arg('login', 'failed', $login_url);
+			wp_redirect($redirect_url);
+			exit;
+        }
+    }
+}
+
+function custom_login_user_with_session_key($session_key) {
+    // Assume validate_session_key function is defined and works as previously described
+    $user_id = validate_session_key($session_key);
+
+    if ($user_id) {
+        wp_set_current_user($user_id);
+        wp_set_auth_cookie($user_id);
+        return true; // Login successful
+    }
+
+    return false; // Login failed
+}
+
+function validate_session_key($provided_session_key) {
+    $users = get_users(array(
+        'meta_key' => 'session_transient_name',
+        'fields' => 'ids', // Only get user IDs to optimize the query.
+    ));
+
+    foreach ($users as $user_id) {
+        $transient_name = get_user_meta($user_id, 'session_transient_name', true);
+        $session_key = get_transient($transient_name);
+
+        if ($session_key === $provided_session_key) {
+            return $user_id;
+        }
+    }
+
+    return false; // Return false if no matching session key is found.
+}
+
+function get_user_by_session_key($session_key) {
+    // Query for users with the 'session_key' meta key matching the provided session key
+    $users = get_users(array(
+        'meta_key'     => 'session_key',
+        'meta_value'   => $session_key,
+        'number'       => 1,
+        'count_total'  => false,
+        'fields'       => 'ids', // Retrieve only the user IDs to improve performance
+    ));
+
+    // Check if we found a user
+    if (!empty($users)) {
+        return $users[0]; // Return the first user ID found
+    }
+
+    return null; // Return null if no matching user was found
+}
+
+
+add_filter('login_message', 'custom_login_failed_message');
+
+function custom_login_failed_message($message) {
+    if (isset($_GET['login']) && $_GET['login'] == 'failed') {
+        $message .= '<div class="error"><p>Invalid session key. Please try again.</p></div>';
+    }
+    return $message;
 }
