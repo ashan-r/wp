@@ -105,68 +105,6 @@ function cm_direct_login() {
     }
 }
 
-// Utility functions for encryption and decryption.
-// Consider moving these to a separate file if you have a utility or helper class.
-function encrypt_data($data, $key, $iv) {
-    return openssl_encrypt($data, 'aes-256-cbc', $key, 0, $iv);
-}
-
-function decrypt_data($data, $key, $iv) {
-    return openssl_decrypt($data, 'aes-256-cbc', $key, 0, $iv);
-}
-
-// Securely retrieve encryption key and IV.
-// Store these in your wp-config.php or a secure environment variable, not directly in the code.
-function get_encryption_key() {
-    return defined('ENCRYPTION_KEY') ? ENCRYPTION_KEY : null; // Replace with your actual key
-}
-
-function get_encryption_iv() {
-    return defined('ENCRYPTION_IV') ? ENCRYPTION_IV : null; // Replace with your actual IV
-}
-
-// Custom Encrypted Login logic.
-add_action('init', 'custom_encrypted_login');
-function custom_encrypted_login() {
-	if (!isset($_GET['direct-login']) || $_GET['direct-login'] != 'true') {
-        return;
-    }
-
-    $key = get_encryption_key();
-    $iv = get_encryption_iv();
-
-    if (!$key || !$iv) {
-        // Proper error handling if encryption key or IV is not set.
-        error_log('Encryption key or IV is not set.');
-        return;
-    }
-
-    $encryptedUsername = isset($_GET['username']) ? sanitize_text_field($_GET['username']) : '';
-    $encryptedPassword = isset($_GET['password']) ? sanitize_text_field($_GET['password']) : '';
-
-    $username = decrypt_data($encryptedUsername, $key, $iv);
-    $password = decrypt_data($encryptedPassword, $key, $iv);
-
-    if (empty($username) || empty($password)) {
-        wp_redirect(home_url('/login-error')); // Redirect to a custom error page.
-        exit;
-    }
-
-    $user = wp_authenticate($username, $password);
-
-    if (!is_wp_error($user)) {
-        wp_clear_auth_cookie();
-        wp_set_current_user($user->ID);
-        wp_set_auth_cookie($user->ID);
-
-        wp_redirect(home_url());
-        exit;
-    } else {
-        wp_redirect(home_url('/login-error')); // Redirect to a custom error page.
-        exit;
-    }
-}
-
 /*
 /////////////  Multiple Cart Session   ///////////////////////
 */
