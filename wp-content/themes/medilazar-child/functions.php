@@ -197,7 +197,7 @@ function get_cart_from_session() {
 
 // Register the custom rest route
 add_action('rest_api_init', function () {
-    register_rest_route('orbetec/v1', '/puncout_login', array(
+    register_rest_route('orbetec/v1', '/punchout_login', array(
         'methods' => 'POST',
         'callback' => 'handle_xml_request',
     ));
@@ -205,66 +205,98 @@ add_action('rest_api_init', function () {
 
 // Handle Login Request
 function handle_xml_request(WP_REST_Request $request) {
-    // Get the raw POST data
-    $xml_data = $request->get_body();
+    $returnCode = 'U'; // Default to 'Unexpected'
+    $response_message = 'An unexpected error occurred.';
+    $loginURL = '';
 
-    // Load the XML string into a SimpleXMLElement
-    $xml = simplexml_load_string($xml_data);
+    try {
+        $xml_data = $request->get_body();
+        $xml = simplexml_load_string($xml_data);
 
-    // Extract login details
-    $username = (string)$xml->header->login->username;
-    $password = (string)$xml->header->login->password;
+        if (!$xml) {
+            throw new Exception('Invalid XML format.');
+        }
 
-    // Use WordPress authentication function to check credentials
-    $user = wp_authenticate($username, $password);
+        $username = (string)$xml->header->login->username;
+        $password = (string)$xml->header->login->password;
 
-   // Based on the authentication result, set the response data
-	if (!is_wp_error($user)) {
-		// Authentication was successful, start the WordPress session
-		wp_set_current_user($user->ID); // Set the current user by passing the user ID
-		wp_set_auth_cookie($user->ID); // Set the auth cookie to log the user in
+        if (empty($username) || empty($password)) {
+            $returnCode = 'A';
+            $response_message = 'Username or password missing.';
+        } else {
+            $user = wp_authenticate($username, $password);
 
-		// Prepare success response data with the login URL
-		$response_data = [
-			'status' => 'success',
-			'message' => 'https://exchange.oracle.com/orders/LinkinCallback.jsp?sessionKey=84vw2wnuq1.ml0Tah9NrkSIrlaIpR9vmQLz/AbJphDGpQbvp6vJqReUbxaPaK--1733&action=shopping&language=US&searchKeywords=',
-		];
-	} else {
-		$response_data = [
-			'status' => 'error',
-			'message' => 'Login failed',
-		];
-	}
+            if (!is_wp_error($user)) {
+                wp_set_current_user($user->ID);
+                wp_set_auth_cookie($user->ID);
 
-    // Generate XML response
+                $returnCode = 'S';
+                $loginURL = 'https://exchange.oracle.com/orders/LinkinCallback.jsp?sessionKey=84vw2wnuq1.ml0Tah9NrkSIrlaIpR9vmQLz/AbJphDGpQbvp6vJqReUbxaPaK--1733&action=shopping&language=US&searchKeywords=';
+                $response_message = ''; // No message needed for success
+            } else {
+                $returnCode = 'A';
+                $response_message = 'Authentication Failure';
+            }
+        }
+    } catch (Exception $e) {
+        $response_message = $e->getMessage();
+    }
+
+    // Prepare response data
+    $response_data = [
+        'returnCode' => $returnCode,
+        'message' => $response_message,
+        'loginURL' => $loginURL,
+    ];
+
+    // Generate and return the XML response
     $response_xml = generate_xml_response($response_data);
-
-    // Return the XML response
     return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
 }
 
+
 // Function to generate XML response from an array of response data
 function generate_xml_response($response_data) {
-    // Create a new SimpleXMLElement object with the response root element
-    $xml_response = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><response></response>');
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->formatOutput = true;
 
-    // Add header with version and return code
-    $header = $xml_response->addChild('header');
-    $header->addAttribute('version', '1.0');
-    $return = $header->addChild('return');
-    $return->addAttribute('returnCode', $response_data['status'] == 'success' ? 'S' : 'F'); // Use 'S' for success, 'F' for failure
+    $response = $dom->createElement('response');
+    $dom->appendChild($response);
 
-    // Add body with login URL, only if login was successful
-    if ($response_data['status'] == 'success') {
-        $body = $xml_response->addChild('body');
-        $loginURL = $body->addChild('loginURL');
-        // Use CDATA for URL to ensure special characters are correctly parsed
-        $node = dom_import_simplexml($loginURL);
-        $no = $node->ownerDocument;
-        $node->appendChild($no->createCDATASection($response_data['message']));
+    $header = $dom->createElement('header');
+    $header->setAttribute('version', '1.0');
+    $response->appendChild($header);
+
+    $return = $dom->createElement('return');
+    $return->setAttribute('returnCode', $response_data['returnCode']);
+    $header->appendChild($return);
+
+    // Handling success differently
+    if ($response_data['returnCode'] === 'S') {
+        if (!empty($response_data['loginURL'])) {
+            $body = $dom->createElement('body');
+            $response->appendChild($body);
+
+            $loginURL = $dom->createElement('loginURL');
+            $cdata = $dom->createCDATASection($response_data['loginURL']);
+            $loginURL->appendChild($cdata);
+            $body->appendChild($loginURL);
+        }
+    } else {
+        // Include returnMessage for non-success codes
+        if (!empty($response_data['message'])) {
+            $returnMessage = $dom->createElement('returnMessage');
+            $cdata = $dom->createCDATASection($response_data['message']);
+            $returnMessage->appendChild($cdata);
+            $return->appendChild($returnMessage);
+        }
+
+        // Ensure an empty loginURL is added to the body for non-success responses
+        $body = $dom->createElement('body');
+        $response->appendChild($body);
+        $loginURL = $dom->createElement('loginURL');
+        $body->appendChild($loginURL);
     }
 
-    // Return the XML string
-    return $xml_response->asXML();
+    return $dom->saveXML();
 }
-
