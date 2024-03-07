@@ -69,46 +69,6 @@ function cm_woocommerce_add_to_cart_button_text_single() {
 add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_to_cart_button_text_single' ); 
 
 /*
-/////////////  Direct Login  ///////////////////////
-*/
-
-function cm_login_endpoint() {
-    add_rewrite_endpoint('direct-login', EP_ROOT);
-	flush_rewrite_rules();
-}
-add_action('init', 'cm_login_endpoint');
-
-add_filter( 'auth_cookie_expiration', function( $duration, $user_id, $remember ) {
-    // Set the cookie to expire after 1 day.
-    return DAY_IN_SECONDS;
-}, 10, 3 );
-
-add_action('init', 'cm_direct_login');
-function cm_direct_login() {
-    if (isset($_GET['direct-login']) && $_GET['direct-login'] == 'true') {
-        $username = sanitize_user($_GET['username']);
-        $password = $_GET['password']; // Passwords are hashed in the database, so sanitization is not necessary
-        $email = sanitize_email($_GET['useremail']);
-        $first_name = sanitize_text_field($_GET['userfname']);
-        $last_name = sanitize_text_field($_GET['userlname']);
-        $user = wp_authenticate($username, $password);
-
-        if (!is_wp_error($user)) {
-            wp_clear_auth_cookie();
-            wp_set_current_user($user->ID);		
-			wp_set_auth_cookie($user->ID, true);
-            // Redirect after successful login
-            wp_redirect(home_url());
-            exit;
-        } else {
-            // Handle login error
-            wp_redirect(home_url() . '/login-error'); // Redirect to a custom error page
-            exit;
-        }
-    }
-}
-
-/*
 /////////////  Punchout XML Processing   ///////////////////////
 */
 
