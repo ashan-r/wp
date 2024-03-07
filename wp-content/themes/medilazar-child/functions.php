@@ -106,10 +106,13 @@ function handle_xml_request(WP_REST_Request $request) {
         $password = (string)$xml->header->login->password;
         $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; // Extract userEmail
 
-        if (empty($username) || empty($password)) {
+        if (empty($username) || empty($password)) { 
             $returnCode = 'A';
             $response_message = 'Username or password missing.';
-        } else {
+        } elseif (!is_email($userEmail)) { // Check if the userEmail is valid
+			$returnCode = 'E';
+			$response_message = 'Invalid email address.';
+		} else {
 
 			// Check if the user exists
 			if (!username_exists($username)) {
@@ -150,7 +153,7 @@ function handle_xml_request(WP_REST_Request $request) {
 					// Construct the login URL with the WordPress site's URL, session key, userEmail, and additional parameters
 					$loginURL = add_query_arg(array(
 						'sessionKey' => $session_key, 
-						'sessionEmail' => $userEmail,                        
+						'userEmail' => $userEmail,                        
 						'action' => 'shopping',
 						'language' => 'US',
 						'searchKeywords' => urlencode($userEmail) // Ensure proper URL encoding
@@ -232,23 +235,19 @@ function generate_xml_response($response_data) {
 add_action('init', 'cm_login_user_with_url_session_key');
 
 function cm_login_user_with_url_session_key() {
-    if (!isset($_GET['sessionKey']) && !isset($_GET['searchKeywords'])) {
+    if (!isset($_GET['sessionKey']) && !isset($_GET['userEmail'])) {
         return;
     }
 
 	$session_key = sanitize_text_field($_GET['sessionKey']);
-	$session_email = sanitize_email($_GET['searchKeywords']);
-    error_log('Session Key: ' . $session_key .  '  Session Email : '. $session_email); // Debugging
+	$session_email = sanitize_email($_GET['userEmail']);
 
     $user_id = validate_session_key($session_key, $session_email);
-    error_log('User ID: ' . $user_id); // Debugging
 
     if ($user_id) {
         // The session key is valid, and we have a user ID, so log the user in
         wp_set_current_user($user_id);
         wp_set_auth_cookie($user_id);
-
-		error_log('Auth Cookie Set for User ID: ' . $user_id); // Debugging
 
         // Redirect to the homepage on Login Success
         wp_redirect(home_url());
@@ -275,8 +274,11 @@ function cm_login_error_message($message) {
 }
 
 
+// CM Session Table Creation with Versioning
+
 define('CM_SESSION_TABLE_VERSION', '1.0');
 define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
+
 
 
 function create_cm_session_table() {
