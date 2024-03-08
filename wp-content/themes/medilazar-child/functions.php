@@ -72,7 +72,14 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 /////////////  Punchout XML Processing   ///////////////////////
 */
 
-// Register the custom rest route
+
+/**
+ * Registers a custom REST API route for punchout login.
+ *
+ * Adds a new route to the WordPress REST API under the 'orbetec/v1' namespace. The route
+ * '/punchout_login' accepts POST requests and uses the 'handle_xml_request' function as
+ * its callback to process the request.
+ */
 add_action('rest_api_init', function () {
     register_rest_route('orbetec/v1', '/punchout_login', array(
         'methods' => 'POST',
@@ -80,7 +87,18 @@ add_action('rest_api_init', function () {
     ));
 });
 
-// Handle Login XML Request
+
+/**
+ * Handles XML requests for user login.
+ *
+ * Processes an XML request containing login information, authenticates the user, and
+ * generates a session key if successful. The function returns an XML response with
+ * the result of the login attempt, including a login URL with the session key and
+ * additional parameters if authentication is successful.
+ *
+ * @param WP_REST_Request $request The request object containing the XML data.
+ * @return WP_REST_Response The XML response with the login result.
+ */
 function handle_xml_request(WP_REST_Request $request) {
     global $wpdb; // Access the WordPress DB
 
@@ -104,7 +122,8 @@ function handle_xml_request(WP_REST_Request $request) {
 
         $username = (string)$xml->header->login->username;
         $password = (string)$xml->header->login->password;
-        $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; // Extract userEmail
+        $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; 
+		$returnURL = (string)$xml->body->loginInfo->returnURL; 
 
         if (empty($username) || empty($password)) { 
             $returnCode = 'A';
@@ -112,14 +131,16 @@ function handle_xml_request(WP_REST_Request $request) {
         } elseif (!is_email($userEmail)) { // Check if the userEmail is valid
 			$returnCode = 'E';
 			$response_message = 'Invalid email address.';
-		} else {
+		} elseif (filter_var(html_entity_decode($returnURL), FILTER_VALIDATE_URL) !== false) { // Check if the returnURL is a valid URL
+            $returnCode = 'E';
+            $response_message = 'Invalid return URL.';
+        } else {
 
 			// Check if the user exists
 			if (!username_exists($username)) {
 				$returnCode = 'A';
 				$response_message = 'User does not exist.';
 			} else {
-				$user = wp_authenticate($username, $password);
 				$user = wp_authenticate($username, $password);
 
 				if (!is_wp_error($user)) {
@@ -153,10 +174,7 @@ function handle_xml_request(WP_REST_Request $request) {
 					// Construct the login URL with the WordPress site's URL, session key, userEmail, and additional parameters
 					$loginURL = add_query_arg(array(
 						'sessionKey' => $session_key, 
-						'userEmail' => $userEmail,                        
-						'action' => 'shopping',
-						'language' => 'US',
-						'searchKeywords' => urlencode($userEmail) // Ensure proper URL encoding
+						'userEmail' => $userEmail
 					), home_url());
 	
 					$response_message = ''; // No message needed for success
@@ -184,7 +202,15 @@ function handle_xml_request(WP_REST_Request $request) {
 }
 
 
-// Function to generate XML response from an array of response data
+/**
+ * Generates an XML response from an array of response data.
+ *
+ * Creates an XML document with a specified structure based on the provided response data.
+ * The XML document includes a header with a version attribute and a return element with
+ * a returnCode attribute. Depending on the returnCode, the body of the response may include
+ * a loginURL element with a CDATA section containing the URL.
+ *
+ */
 function generate_xml_response($response_data) {
     $dom = new DOMDocument('1.0', 'UTF-8');
     $dom->formatOutput = true;
@@ -231,9 +257,13 @@ function generate_xml_response($response_data) {
 }
 
 
-//  Log In user using Login URL
-add_action('init', 'cm_login_user_with_url_session_key');
-
+/**
+ * Logs in a user based on session key and email passed via URL parameters.
+ *
+ * Checks for 'sessionKey' and 'userEmail' GET parameters, validates them, and logs in the
+ * corresponding user if the session is valid. If the session is invalid, the user is logged out.
+ * After the login or logout action, the user is redirected to the home page.
+ */
 function cm_login_user_with_url_session_key() {
     if (!isset($_GET['sessionKey']) && !isset($_GET['userEmail'])) {
         return;
@@ -260,7 +290,15 @@ function cm_login_user_with_url_session_key() {
     }
 }
 
-add_filter('login_message', 'cm_login_error_message');
+
+/**
+ * Adds custom error messages to the login page.
+ *
+ * Appends custom error messages to the default login message based on the 'login_error' GET parameter.
+ * 
+ * Currently handles 'invalid_session'
+ * @return string The modified login message with custom error messages appended.
+ */
 function cm_login_error_message($message) {
     if (isset($_GET['login_error'])) {
         $error_code = sanitize_text_field($_GET['login_error']);
@@ -272,15 +310,25 @@ function cm_login_error_message($message) {
     }
     return $message;
 }
+add_filter('login_message', 'cm_login_error_message');
 
 
-// CM Session Table Creation with Versioning
-
+/**
+* CM Session Table Creation Define Versioning 
+**/
 define('CM_SESSION_TABLE_VERSION', '1.0');
 define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
 
 
-
+/**
+ * Creates the cm_sessions table in the database if it doesn't exist or updates it if the version has changed.
+ *
+ * This function checks if the cm_sessions table exists in the database. If it does not, or if the
+ * version of the table has changed, it creates or updates the table accordingly. The table is used to
+ * store session information for users, including the session ID, user ID, session key, session email,
+ * creation time, and expiration time. The user ID is a foreign key that references the ID in the users table.
+ *
+ */
 function create_cm_session_table() {
     global $wpdb;
     $charset_collate = $wpdb->get_charset_collate();
@@ -312,9 +360,21 @@ function create_cm_session_table() {
     }
 }
 
-
 add_action('after_setup_theme', 'create_cm_session_table');
 
+/**
+ * Validates a session key and email combination.
+ *
+ * Checks if the given session key and email correspond to a valid session in the database
+ * that has not yet expired. If the session is valid, it returns the user ID associated with
+ * the session. Otherwise, it returns false.
+ *
+ * @global wpdb $wpdb WordPress database abstraction object.
+ *
+ * @param string $session_key   The session key to validate.
+ * @param string $session_email The email associated with the session key.
+ * @return int|false The user ID associated with the session if valid, otherwise false.
+ */
 function validate_session_key($session_key, $session_email) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'cm_sessions';
