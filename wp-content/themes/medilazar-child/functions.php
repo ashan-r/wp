@@ -103,54 +103,65 @@ add_action('rest_api_init', function () {
  * @return WP_REST_Response The XML response with the login result.
  */
 
-function handle_punchout_login_request(WP_REST_Request $request){
-  // Determine the content type of the request
-  $content_type = $request->get_content_type();
-    
-  if ($content_type && $content_type['value'] == 'application/x-www-form-urlencoded') {
-      // Handle XML request
-      $body_params = $request->get_body_params();
-     // $xml_data = $body_params['loginRequest'] ?? null;
-
-      $xml_data = $request->get_param('loginRequest');
-      $xml = simplexml_load_string($xml_data);
-      // Check if xml_data is not null
-      if ($xml_data === null) {
-          throw new Exception('No XML data provided.');
-      }else if (!$xml) {
-          throw new Exception('Invalid XML format.');
-      }else  if($xml_data) {
-        // Process XML data
-        return handle_xml_request($xml_data);
-    }   
-    
-  } elseif ($content_type && $content_type['value'] == 'text/xml') {
-      // Handle cXML request
-      $body = $request->get_body();
-
-      if ($body === null) {
-        throw new Exception('No XML data provided.');
-      }
-
-      libxml_use_internal_errors(true); // Use internal libxml errors to capture XML parse errors
-      $cxml = simplexml_load_string($body);
+ function handle_punchout_login_request(WP_REST_Request $request){
+    // Determine the content type of the request
+    $content_type = $request->get_content_type();
       
-      // Check if the cXML is well-formed and contains the PunchOutSetupRequest element
-      if ($cxml === false) {
-          $errors = libxml_get_errors(); // Retrieve XML parse errors
-          libxml_clear_errors(); // Clear libxml error buffer
-          $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
-              return trim($error->message);
-          }, $errors));
-          throw new Exception($errorMsg);
-      } elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
-          throw new Exception('Missing PunchOutSetupRequest element.');
-      } else {
-          // Process cXML data
-          return handle_cxml_request($body);
-      }
+    if ($content_type && $content_type['value'] == 'application/x-www-form-urlencoded') {
+        // Handle XML request
+        $body_params = $request->get_body_params();
+        $xml_data = $request->get_param('loginRequest');
+        
+        // Ensure XML data is not null or empty before processing
+        if (empty($xml_data)) {
+            throw new Exception('No XML data provided.');
+        }
+        
+        libxml_use_internal_errors(true); // Use internal libxml errors
+        $xml = simplexml_load_string($xml_data);
+        
+        // Check if XML is valid
+        if (!$xml) {
+            $errors = libxml_get_errors(); // Retrieve XML parse errors
+            libxml_clear_errors(); // Clear libxml error buffer
+            $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
+                return trim($error->message);
+            }, $errors));
+            throw new Exception($errorMsg);
+        } else {
+          // Process XML data
+          return handle_xml_request($xml_data);
+        }   
+        
+    } elseif ($content_type && $content_type['value'] == 'text/xml') {
+        // Handle cXML request
+        $body = $request->get_body();
+  
+        // Ensure cXML data is not null or empty before processing
+        if (empty($body)) {
+          throw new Exception('No XML data provided.');
+        }
+  
+        libxml_use_internal_errors(true); // Use internal libxml errors to capture XML parse errors
+        $cxml = simplexml_load_string($body);
+        
+        // Check if the cXML is well-formed
+        if ($cxml === false) {
+            $errors = libxml_get_errors(); // Retrieve XML parse errors
+            libxml_clear_errors(); // Clear libxml error buffer
+            $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
+                return trim($error->message);
+            }, $errors));
+            throw new Exception($errorMsg);
+        } elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
+            throw new Exception('Missing PunchOutSetupRequest element.');
+        } else {
+            // Process cXML data
+            return handle_cxml_request($body);
+        }
+    }
   }
-}
+  
 
 
 
@@ -319,7 +330,7 @@ function handle_cxml_request($cxml_body) {
         $password = (string)$cxml->Header->Sender->Credential->SharedSecret;
         $userEmail = (string)$cxml->Request->PunchOutSetupRequest->Contact->Email;
         $returnURL = (string)$cxml->Request->PunchOutSetupRequest->BrowserFormPost->URL;
-
+        $payloadID = (string)$cxml['payloadID'];
 
         if (empty($returnURL)) {
             $returnCode = 'E';
@@ -366,6 +377,7 @@ function handle_cxml_request($cxml_body) {
                                     'userEmail' => $userEmail
                                 ), home_url());
 
+                               // $loginURL = html_entity_decode($returnURL);
                                 $response_message = ''; // No message needed for success
                             } else {
                                 $returnCode = 'A';
@@ -380,15 +392,15 @@ function handle_cxml_request($cxml_body) {
     }
 
     // Assuming you have a function to generate cXML responses
-    $response_cxml = generate_cxml_response($returnCode, $response_message, $loginURL);
+    $response_cxml = generate_cxml_response($returnCode, $response_message, html_entity_decode($loginURL),$payloadID);
     return new WP_REST_Response($response_cxml, 200, ['Content-Type' => 'text/xml']);
 }
 
 
-function generate_cxml_response($returnCode, $response_message, $loginURL) {
+function generate_cxml_response($returnCode, $response_message, $loginURL, $payloadIDFromRequest) {
     $dom = new DOMDocument('1.0', 'UTF-8');
     $dom->formatOutput = true;
-    $dom->preserveWhiteSpace = false;
+    $dom->preserveWhiteSpace = false; // Optional: Minimizes the output format
     $dom->loadXML('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE cXML SYSTEM "http://xml.cxml.org/schemas/cXML/1.1.010/cXML.dtd">');
 
     // Create the root cXML element
@@ -396,7 +408,7 @@ function generate_cxml_response($returnCode, $response_message, $loginURL) {
     $dom->appendChild($cxml);
     $cxml->setAttribute('version', '1.1.007');
     $cxml->setAttribute('xml:lang', 'en-US');
-    $cxml->setAttribute('payloadID', '200303450803006749@b2b.euro.com'); // This should be dynamically generated
+    $cxml->setAttribute('payloadID', $payloadIDFromRequest); // Dynamically use the payloadID from the PunchOutSetupRequest
     $cxml->setAttribute('timestamp', date('c'));
 
     // Create and append the Response element
@@ -406,10 +418,10 @@ function generate_cxml_response($returnCode, $response_message, $loginURL) {
     // Set the Status element based on the returnCode
     $status = $dom->createElement('Status');
     $response->appendChild($status);
-    if ($returnCode === 'S') {
-        $status->setAttribute('code', '200');
-        $status->setAttribute('text', 'OK');
+    $status->setAttribute('code', $returnCode === 'S' ? '200' : '401');
+    $status->setAttribute('text', $returnCode === 'S' ? 'OK' : '');
 
+    if ($returnCode === 'S') {
         // Include PunchOutSetupResponse for successful connections
         $punchOutSetupResponse = $dom->createElement('PunchOutSetupResponse');
         $response->appendChild($punchOutSetupResponse);
@@ -417,18 +429,16 @@ function generate_cxml_response($returnCode, $response_message, $loginURL) {
         $startPage = $dom->createElement('StartPage');
         $punchOutSetupResponse->appendChild($startPage);
 
-        $url = $dom->createElement('URL', $loginURL); // Assuming $loginURL is the session-specific login URL
-        $startPage->appendChild($url);
-    } else {
-        // For unsuccessful connections, adjust as needed
-        $status->setAttribute('code', '401'); // Example: Unauthorized access
-        $status->setAttribute('text', ''); // Text attribute can be left empty or provide a brief error message
+        // Insert the login URL within a CDATA section
+        $urlElement = $dom->createElement('URL');
+        $startPage->appendChild($urlElement);
+        $cdata = $dom->createCDATASection($loginURL);
+        $urlElement->appendChild($cdata);
     }
 
     // Return the XML string
     return $dom->saveXML();
 }
-
 
 
 /**
