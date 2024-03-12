@@ -76,14 +76,14 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 /**
  * Registers a custom REST API route for punchout login.
  *
- * Adds a new route to the WordPress REST API under the 'orbetec/v1' namespace. The route
+ * Adds a new route to the WordPress REST API under the 'comercialmedica/v1' namespace. The route
  * '/punchout_login' accepts POST requests and uses the 'handle_xml_request' function as
  * its callback to process the request.
  */
 add_action('rest_api_init', function () {
-    register_rest_route('orbetec/v1', '/punchout_login', array(
+    register_rest_route('comercialmedica/v1', '/punchout_login', array(
         'methods' => 'POST',
-        'callback' => 'handle_xml_request',
+        'callback' => 'handle_punchout_login_request',
     ));
 });
 
@@ -95,11 +95,67 @@ add_action('rest_api_init', function () {
  * generates a session key if successful. The function returns an XML response with
  * the result of the login attempt, including a login URL with the session key and
  * additional parameters if authentication is successful.
+ * 
+ * for xml loginResponse  with application/type x-www-url-encoded
+ * for xcml  PunchOutSetupRequest  with application/type text/xml
  *
  * @param WP_REST_Request $request The request object containing the XML data.
  * @return WP_REST_Response The XML response with the login result.
  */
-function handle_xml_request(WP_REST_Request $request) {
+
+function handle_punchout_login_request(WP_REST_Request $request){
+  // Determine the content type of the request
+  $content_type = $request->get_content_type();
+    
+  if ($content_type && $content_type['value'] == 'application/x-www-form-urlencoded') {
+      // Handle XML request
+      $body_params = $request->get_body_params();
+     // $xml_data = $body_params['loginRequest'] ?? null;
+
+      $xml_data = $request->get_param('loginRequest');
+      $xml = simplexml_load_string($xml_data);
+      // Check if xml_data is not null
+      if ($xml_data === null) {
+          throw new Exception('No XML data provided.');
+      }else if (!$xml) {
+          throw new Exception('Invalid XML format.');
+      }else  if($xml_data) {
+        // Process XML data
+        return handle_xml_request($xml_data);
+    }   
+    
+  } elseif ($content_type && $content_type['value'] == 'text/xml') {
+      // Handle cXML request
+      $body = $request->get_body();
+
+      if ($body === null) {
+        throw new Exception('No XML data provided.');
+      }
+
+      libxml_use_internal_errors(true); // Use internal libxml errors to capture XML parse errors
+      $cxml = simplexml_load_string($body);
+      
+      // Check if the cXML is well-formed and contains the PunchOutSetupRequest element
+      if ($cxml === false) {
+          $errors = libxml_get_errors(); // Retrieve XML parse errors
+          libxml_clear_errors(); // Clear libxml error buffer
+          $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
+              return trim($error->message);
+          }, $errors));
+          throw new Exception($errorMsg);
+      } elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
+          throw new Exception('Missing PunchOutSetupRequest element.');
+      } else {
+          // Process cXML data
+          return handle_cxml_request($body);
+      }
+  }
+}
+
+
+
+
+function handle_xml_request($xml) {
     global $wpdb; // Access the WordPress DB
 
     $returnCode = 'U';
@@ -107,19 +163,6 @@ function handle_xml_request(WP_REST_Request $request) {
     $loginURL = '';
 
     try {
-        $xml_data = $request->get_param('loginRequest');
-
-        // Check if xml_data is not null
-        if ($xml_data === null) {
-            throw new Exception('No XML data provided.');
-        }
-
-        $xml = simplexml_load_string($xml_data);
-
-        if (!$xml) {
-            throw new Exception('Invalid XML format.');
-        }
-
         $username = (string)$xml->header->login->username;
         $password = (string)$xml->header->login->password;
         $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; 
@@ -131,9 +174,9 @@ function handle_xml_request(WP_REST_Request $request) {
         } elseif (!is_email($userEmail)) { // Check if the userEmail is valid
 			$returnCode = 'E';
 			$response_message = 'Invalid email address.';
-		} elseif (filter_var(html_entity_decode($returnURL), FILTER_VALIDATE_URL) !== false) { // Check if the returnURL is a valid URL
+        } elseif (empty($returnURL)) {
             $returnCode = 'E';
-            $response_message = 'Invalid return URL.';
+            $response_message = 'Return URL is missing.';
         } else {
 
 			// Check if the user exists
@@ -257,6 +300,137 @@ function generate_xml_response($response_data) {
 }
 
 
+
+function handle_cxml_request($cxml_body) {
+    global $wpdb; // Access the WordPress DB
+
+    // Initialize response parameters
+    $returnCode = 'Failure';
+    $response_message = 'An unexpected error occurred.';
+    $loginURL = '';
+
+    try {
+    
+        // Load the cXML string as an object
+        $cxml = new SimpleXMLElement($cxml_body);
+
+        // Extract necessary information from the cXML
+        $username = (string)$cxml->Header->Sender->Credential->Identity;
+        $password = (string)$cxml->Header->Sender->Credential->SharedSecret;
+        $userEmail = (string)$cxml->Request->PunchOutSetupRequest->Contact->Email;
+        $returnURL = (string)$cxml->Request->PunchOutSetupRequest->BrowserFormPost->URL;
+
+
+        if (empty($returnURL)) {
+            $returnCode = 'E';
+            $response_message = 'Return URL is missing.';
+        } else{
+                /// Check if the user exists
+                if (!username_exists($username)) {
+                    $returnCode = 'A';
+                    $response_message = 'User does not exist.';
+                    } else {
+                        $user = wp_authenticate($username, $password);
+
+                            if (!is_wp_error($user)) {
+                                wp_set_current_user($user->ID);
+                                wp_set_auth_cookie($user->ID);
+
+                                $returnCode = 'S';
+
+                                // Generate a unique session key
+                                $session_key = wp_generate_password(20, false);
+
+                                // Insert the session key and userEmail into the wp_cm_sessions table
+                                $wpdb->insert(
+                                    $wpdb->prefix . 'cm_sessions', 
+                                    [
+                                        'user_id' => $user->ID,
+                                        'session_key' => $session_key,
+                                        'session_email' => $userEmail, 
+                                        'created_at' => current_time('mysql'),
+                                        'expires_at' => date('Y-m-d H:i:s', time() + 60 * 60 * 24)
+                                    ],
+                                    [
+                                        '%d', // user_id
+                                        '%s', // session_key
+                                        '%s', // session_email
+                                        '%s', // created_at
+                                        '%s'  // expires_at
+                                    ]
+                                );
+
+                                // Construct the login URL with the WordPress site's URL, session key, userEmail, and if there are other additional parameters
+                                $loginURL = add_query_arg(array(
+                                    'sessionKey' => $session_key, 
+                                    'userEmail' => $userEmail
+                                ), home_url());
+
+                                $response_message = ''; // No message needed for success
+                            } else {
+                                $returnCode = 'A';
+                                $response_message = 'Authentication Failure';
+                            }
+                        }
+
+        }
+        
+    } catch (Exception $e) {
+        $response_message = $e->getMessage();
+    }
+
+    // Assuming you have a function to generate cXML responses
+    $response_cxml = generate_cxml_response($returnCode, $response_message, $loginURL);
+    return new WP_REST_Response($response_cxml, 200, ['Content-Type' => 'text/xml']);
+}
+
+
+function generate_cxml_response($returnCode, $response_message, $loginURL) {
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->formatOutput = true;
+    $dom->preserveWhiteSpace = false;
+    $dom->loadXML('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE cXML SYSTEM "http://xml.cxml.org/schemas/cXML/1.1.010/cXML.dtd">');
+
+    // Create the root cXML element
+    $cxml = $dom->createElement('cXML');
+    $dom->appendChild($cxml);
+    $cxml->setAttribute('version', '1.1.007');
+    $cxml->setAttribute('xml:lang', 'en-US');
+    $cxml->setAttribute('payloadID', '200303450803006749@b2b.euro.com'); // This should be dynamically generated
+    $cxml->setAttribute('timestamp', date('c'));
+
+    // Create and append the Response element
+    $response = $dom->createElement('Response');
+    $cxml->appendChild($response);
+
+    // Set the Status element based on the returnCode
+    $status = $dom->createElement('Status');
+    $response->appendChild($status);
+    if ($returnCode === 'S') {
+        $status->setAttribute('code', '200');
+        $status->setAttribute('text', 'OK');
+
+        // Include PunchOutSetupResponse for successful connections
+        $punchOutSetupResponse = $dom->createElement('PunchOutSetupResponse');
+        $response->appendChild($punchOutSetupResponse);
+
+        $startPage = $dom->createElement('StartPage');
+        $punchOutSetupResponse->appendChild($startPage);
+
+        $url = $dom->createElement('URL', $loginURL); // Assuming $loginURL is the session-specific login URL
+        $startPage->appendChild($url);
+    } else {
+        // For unsuccessful connections, adjust as needed
+        $status->setAttribute('code', '401'); // Example: Unauthorized access
+        $status->setAttribute('text', ''); // Text attribute can be left empty or provide a brief error message
+    }
+
+    // Return the XML string
+    return $dom->saveXML();
+}
+
+
+
 /**
  * Logs in a user based on session key and email passed via URL parameters.
  *
@@ -305,9 +479,7 @@ function cm_login_error_message($message) {
         $error_code = sanitize_text_field($_GET['login_error']);
         if ('invalid_session' === $error_code) {
             $message .= '<div class="error"><p>Invalid session key. Please try again.</p></div>';
-        } elseif ('nonce_failed' === $error_code) {
-            $message .= '<div class="error"><p>Security check failed. Please try again.</p></div>';
-        }
+        } 
     }
     return $message;
 }
