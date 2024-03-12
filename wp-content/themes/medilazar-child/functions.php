@@ -164,8 +164,11 @@ add_action('rest_api_init', function () {
   
 
 
-
-
+/**
+ * Handle request based on XML data 
+ *
+ *
+ */
 function handle_xml_request($xml) {
     global $wpdb; // Access the WordPress DB
 
@@ -310,8 +313,11 @@ function generate_xml_response($response_data) {
     return $dom->saveXML();
 }
 
-
-
+/**
+ * Handle request based on cXML data 
+ *
+ *
+ */
 function handle_cxml_request($cxml_body) {
     global $wpdb; // Access the WordPress DB
 
@@ -337,7 +343,10 @@ function handle_cxml_request($cxml_body) {
             $response_message = 'Return URL is missing.';
         } else{
                 /// Check if the user exists
-                if (!username_exists($username)) {
+                if(trim($username) === ''){
+                    $returnCode = 'E';
+                    $response_message = 'username is empty.';
+                }else if (!username_exists($username)) {
                     $returnCode = 'A';
                     $response_message = 'User does not exist.';
                     } else {
@@ -377,7 +386,6 @@ function handle_cxml_request($cxml_body) {
                                     'userEmail' => $userEmail
                                 ), home_url());
 
-                               // $loginURL = html_entity_decode($returnURL);
                                 $response_message = ''; // No message needed for success
                             } else {
                                 $returnCode = 'A';
@@ -396,11 +404,16 @@ function handle_cxml_request($cxml_body) {
     return new WP_REST_Response($response_cxml, 200, ['Content-Type' => 'text/xml']);
 }
 
-
+/**
+ * Generates an cXML response from an array of response data.
+ *
+ * Creates an cXML document with a specified structure based on the provided response data.
+ *
+ */
 function generate_cxml_response($returnCode, $response_message, $loginURL, $payloadIDFromRequest) {
     $dom = new DOMDocument('1.0', 'UTF-8');
     $dom->formatOutput = true;
-    $dom->preserveWhiteSpace = false; // Optional: Minimizes the output format
+    $dom->preserveWhiteSpace = false; // Minimize the output format
     $dom->loadXML('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE cXML SYSTEM "http://xml.cxml.org/schemas/cXML/1.1.010/cXML.dtd">');
 
     // Create the root cXML element
@@ -408,7 +421,7 @@ function generate_cxml_response($returnCode, $response_message, $loginURL, $payl
     $dom->appendChild($cxml);
     $cxml->setAttribute('version', '1.1.007');
     $cxml->setAttribute('xml:lang', 'en-US');
-    $cxml->setAttribute('payloadID', $payloadIDFromRequest); // Dynamically use the payloadID from the PunchOutSetupRequest
+    $cxml->setAttribute('payloadID', $payloadIDFromRequest);
     $cxml->setAttribute('timestamp', date('c'));
 
     // Create and append the Response element
@@ -419,7 +432,7 @@ function generate_cxml_response($returnCode, $response_message, $loginURL, $payl
     $status = $dom->createElement('Status');
     $response->appendChild($status);
     $status->setAttribute('code', $returnCode === 'S' ? '200' : '401');
-    $status->setAttribute('text', $returnCode === 'S' ? 'OK' : '');
+    $status->setAttribute('text', $returnCode === 'S' ? 'OK' : $response_message);
 
     if ($returnCode === 'S') {
         // Include PunchOutSetupResponse for successful connections
@@ -429,16 +442,24 @@ function generate_cxml_response($returnCode, $response_message, $loginURL, $payl
         $startPage = $dom->createElement('StartPage');
         $punchOutSetupResponse->appendChild($startPage);
 
-        // Insert the login URL within a CDATA section
+        // Insert the login URL
         $urlElement = $dom->createElement('URL');
         $startPage->appendChild($urlElement);
         $cdata = $dom->createCDATASection($loginURL);
         $urlElement->appendChild($cdata);
+    } else {
+        // Optionally handle unsuccessful connection response modifications here
+        // Include a detailed message if the connection is unsuccessful
+        $messageElement = $dom->createElement('Message');
+        $response->appendChild($messageElement);
+        $cdataMessage = $dom->createCDATASection($response_message);
+        $messageElement->appendChild($cdataMessage);
     }
 
     // Return the XML string
     return $dom->saveXML();
 }
+
 
 
 /**
@@ -558,6 +579,7 @@ add_action('after_setup_theme', 'create_cm_session_table');
  * @param string $session_email The email associated with the session key.
  * @return int|false The user ID associated with the session if valid, otherwise false.
  */
+
 function validate_session_key($session_key, $session_email) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'cm_sessions';
