@@ -235,7 +235,6 @@ function handle_xml_request($xml) {
 
     try {
 
-
         $username = (string)$xml->header->login->username;
         $password = (string)$xml->header->login->password;
         $userEmail = (string)$xml->body->loginInfo->userInfo->userContactInfo->userEmail; 
@@ -275,7 +274,7 @@ function handle_xml_request($xml) {
 					$session_key = wp_generate_password(20, false);
 	
 					// Insert the session key and userEmail into the wp_cm_sessions table
-					$wpdb->insert(
+					$inserted = $wpdb->insert(
 						$wpdb->prefix . 'cm_sessions', 
 						[
 							'user_id' => $user->ID,
@@ -574,6 +573,38 @@ function cm_login_user_with_url_session_key() {
 		exit;
     }
 }
+
+
+/**
+ * Sets a session key cookie for the user.
+ *
+ * @param string $session_key The session key to be set in the cookie.
+ * @param int $expiration_period The number of seconds until the cookie should expire.
+ * @param string $path The path on the server in which the cookie will be available on.
+ * @param bool $secure Indicates that the cookie should only be transmitted over a secure HTTPS connection.
+ * @param bool $httponly When TRUE the cookie will be made accessible only through the HTTP protocol.
+ * @param string $samesite Prevents the browser from sending this cookie along with cross-site requests.
+ */
+function set_session_cookie($session_key, $expiration_period = 86400 * 30, $path = '/', $secure = true, $httponly = true, $samesite = 'Lax') {
+    $cookie_name = 'session_key';
+    $cookie_value = $session_key;
+    $expiration = time() + $expiration_period;
+    
+    // Check for PHP version to determine how to set the cookie with SameSite attribute
+    if (version_compare(PHP_VERSION, '7.3.0', '>=')) {
+        setcookie($cookie_name, $cookie_value, [
+            'expires' => $expiration,
+            'path' => $path,
+            'secure' => $secure,
+            'httponly' => $httponly,
+            'samesite' => $samesite
+        ]);
+    } else {
+        // Fallback for versions prior to 7.3.0, without SameSite attribute
+        setcookie($cookie_name, $cookie_value, $expiration, $path, '', $secure, $httponly);
+    }
+}
+
 
 add_action('init', 'cm_login_user_with_url_session_key');
 
