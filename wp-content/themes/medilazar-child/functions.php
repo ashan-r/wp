@@ -160,7 +160,8 @@ add_action('rest_api_init', function () {
             return cxml_failure_response(400, $errorMsg, '','');
            
         } elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
-            throw new Exception('Missing PunchOutSetupRequest element.');
+            return cxml_failure_response(400, 'Missing PunchOutSetupRequest element.', '','');
+           
         } else {
             // Process cXML data
             return handle_cxml_request($body);
