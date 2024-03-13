@@ -274,7 +274,7 @@ function handle_xml_request($xml) {
 					$session_key = wp_generate_password(20, false);
 	
 					// Insert the session key and userEmail into the wp_cm_sessions table
-					$inserted = $wpdb->insert(
+				    $wpdb->insert(
 						$wpdb->prefix . 'cm_sessions', 
 						[
 							'user_id' => $user->ID,
@@ -401,6 +401,8 @@ function handle_cxml_request($cxml_body) {
         $userEmail = (string)$cxml->Request->PunchOutSetupRequest->Contact->Email;
         $returnURL = (string)$cxml->Request->PunchOutSetupRequest->BrowserFormPost->URL;
         $payloadID = (string)$cxml['payloadID'];
+        $version = (string)$cxml['version'];
+        $language = (string)$cxml['xml:lang'];
 
         if (empty($returnURL)) {
             $returnCode = '400';
@@ -464,7 +466,7 @@ function handle_cxml_request($cxml_body) {
     }
 
     // Assuming you have a function to generate cXML responses
-    $response_cxml = generate_cxml_response($returnCode, $response_message, html_entity_decode($loginURL),$payloadID);
+    $response_cxml = generate_cxml_response($returnCode, $response_message, html_entity_decode($loginURL),$payloadID, $language, $version);
     return new WP_REST_Response($response_cxml, $returnCode, ['Content-Type' => 'text/xml']);
 }
 
@@ -474,17 +476,19 @@ function handle_cxml_request($cxml_body) {
  * Creates an cXML document with a specified structure based on the provided response data.
  *
  */
-function generate_cxml_response($returnCode, $response_message, $loginURL, $payloadIDFromRequest) {
-    $dom = new DOMDocument('1.0', 'UTF-8');
-    $dom->formatOutput = true;
-    $dom->preserveWhiteSpace = false; // Minimize the output format
-    $dom->loadXML('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE cXML SYSTEM "http://xml.cxml.org/schemas/cXML/1.1.010/cXML.dtd">');
+function generate_cxml_response($returnCode, $response_message, $loginURL, $payloadIDFromRequest,$language = 'en-US',$version = '1.1.007') {
+
+    $implementation = new DOMImplementation();
+    $doctype = $implementation->createDocumentType('cXML', '', 'http://xml.cxml.org/schemas/cXML/1.1.010/cXML.dtd');
+    $dom = $implementation->createDocument(null, '', $doctype);
+    $dom->encoding = 'UTF-8';
 
     // Create the root cXML element
     $cxml = $dom->createElement('cXML');
     $dom->appendChild($cxml);
-    $cxml->setAttribute('version', '1.1.007');
-    $cxml->setAttribute('xml:lang', 'en-US');
+
+    $cxml->setAttribute('version', $version);
+    $cxml->setAttribute('xml:lang', $language);
     $cxml->setAttribute('payloadID', $payloadIDFromRequest);
     $cxml->setAttribute('timestamp', date('c'));
 
@@ -511,14 +515,7 @@ function generate_cxml_response($returnCode, $response_message, $loginURL, $payl
         $startPage->appendChild($urlElement);
         $cdata = $dom->createCDATASection($loginURL);
         $urlElement->appendChild($cdata);
-    } else {
-        // Optionally handle unsuccessful connection response modifications here
-        // Include a detailed message if the connection is unsuccessful
-        $messageElement = $dom->createElement('Message');
-        $response->appendChild($messageElement);
-        $cdataMessage = $dom->createCDATASection($response_message);
-        $messageElement->appendChild($cdataMessage);
-    }
+    } 
 
     // Return the XML string
     return $dom->saveXML();
@@ -541,6 +538,29 @@ function xml_error_response($returnCode, $response_message){
     return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
 }
 
+
+/**
+ * Retrieves the expiration time for a given session key from the cm_sessions table.
+ *
+ * @param string $session_key The session key to look up.
+ * @return string|null The expiration time as a string in 'Y-m-d H:i:s' format, or null if not found.
+ */
+function get_cm_session_expires_at($session_key) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'cm_sessions';
+
+    // Prepare the SQL query to select the expires_at field
+    $query = $wpdb->prepare(
+        "SELECT expires_at FROM $table_name WHERE session_key = %s",
+        $session_key
+    );
+
+    // Execute the query and get the result
+    $expires_at = $wpdb->get_var($query);
+
+    return $expires_at;
+}
+
 /**
  * Logs in a user based on session key and email passed via URL parameters.
  *
@@ -559,13 +579,29 @@ function cm_login_user_with_url_session_key() {
     $user_id = validate_session_key($session_key, $session_email);
 
     if ($user_id) {
-        // The session key is valid, and we have a user ID, so log the user in
-        wp_set_current_user($user_id);
-        wp_set_auth_cookie($user_id);
 
-        // Redirect to the homepage on Login Success
-        wp_redirect(home_url());
-        exit;
+        $expires_at = get_cm_session_expires_at($session_key);
+        $expires_at_timestamp = strtotime($expires_at);
+        $current_time = time();
+        $expiration_period = $expires_at_timestamp - $current_time;
+
+        if ($expiration_period > 0) {
+            // The session key is valid, and we have a user ID, so log the user in
+            wp_set_current_user($user_id);
+            wp_set_auth_cookie($user_id);
+            // Set the session cookie
+            set_cm_session_cookie($session_key,$expiration_period);
+            // Redirect to the homepage on Login Success
+            wp_redirect(home_url());
+            exit;
+        }else{
+            wp_logout();
+            // Redirect to the WordPress main URL
+            wp_redirect(home_url());
+            exit;
+        }
+           
+       
     } else {
 		wp_logout();
 		// Redirect to the WordPress main URL
@@ -585,13 +621,11 @@ function cm_login_user_with_url_session_key() {
  * @param bool $httponly When TRUE the cookie will be made accessible only through the HTTP protocol.
  * @param string $samesite Prevents the browser from sending this cookie along with cross-site requests.
  */
-function set_session_cookie($session_key, $expiration_period = 86400 * 30, $path = '/', $secure = true, $httponly = true, $samesite = 'Lax') {
-    $cookie_name = 'session_key';
+function set_cm_session_cookie($session_key, $expiration_period = 86400, $path = '/', $secure = true, $httponly = false, $samesite = 'Lax') {
+    $cookie_name = 'cm_session_key';
     $cookie_value = $session_key;
     $expiration = time() + $expiration_period;
     
-    // Check for PHP version to determine how to set the cookie with SameSite attribute
-    if (version_compare(PHP_VERSION, '7.3.0', '>=')) {
         setcookie($cookie_name, $cookie_value, [
             'expires' => $expiration,
             'path' => $path,
@@ -599,10 +633,7 @@ function set_session_cookie($session_key, $expiration_period = 86400 * 30, $path
             'httponly' => $httponly,
             'samesite' => $samesite
         ]);
-    } else {
-        // Fallback for versions prior to 7.3.0, without SameSite attribute
-        setcookie($cookie_name, $cookie_value, $expiration, $path, '', $secure, $httponly);
-    }
+
 }
 
 
@@ -722,7 +753,7 @@ add_action('init', 'create_cm_cart_data_table');
 
 function is_session_specific_user() {
     // Example of checking for a session-specific key
-    if (isset($_COOKIE['session_key']) && !empty($_COOKIE['session_key'])) {
+    if (isset($_COOKIE['cm_session_key']) && !empty($_COOKIE['cm_session_key'])) {
         return true; // This is a session-specific user
     }
     return false; // This is a normal user
