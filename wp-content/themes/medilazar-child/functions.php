@@ -167,7 +167,6 @@ add_action('rest_api_init', function () {
         }
          
         // Handle XML request
-        $body_params = $request->get_body_params();
         $xml_data = $request->get_param('loginRequest');
       
         
@@ -197,25 +196,34 @@ add_action('rest_api_init', function () {
         }
   
         libxml_use_internal_errors(true); // Use internal libxml errors to capture XML parse errors
-        $cxml = simplexml_load_string($body);
-        
-        // Check if the cXML is well-formed
-        if ($cxml === false) {
-            $errors = libxml_get_errors(); // Retrieve XML parse errors
-            libxml_clear_errors(); // Clear libxml error buffer
-            $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
-                return trim($error->message);
-            }, $errors));
-            
-            return cxml_failure_response(400, $errorMsg, '','');
-           
-        } elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
-            return cxml_failure_response(400, 'Missing PunchOutSetupRequest element.', '','');
-           
-        } else {
-            // Process cXML data
-            return handle_cxml_request($body);
-        }
+
+
+        try {
+            $cxml = simplexml_load_string($body);
+
+            if ($cxml === false) {
+                $errors = libxml_get_errors(); // Retrieve XML parse errors
+                libxml_clear_errors(); // Clear libxml error buffer
+                $errorMsg = "Invalid XML format. Errors: " . implode(', ', array_map(function($error) {
+                    return trim($error->message);
+                }, $errors));
+
+                libxml_use_internal_errors(false);
+                return cxml_failure_response(400, $errorMsg, '','');
+               
+            }elseif (!isset($cxml->Request->PunchOutSetupRequest)) {
+                return cxml_failure_response(400, 'Missing PunchOutSetupRequest element.', '','');
+               
+            } else {
+                // Process cXML data
+                return handle_cxml_request($body);
+            }
+        }catch(Exception $e){
+             // Catch any other exceptions and handle them
+            error_log("An error occurred: " . $e->getMessage());
+            return cxml_failure_response(400,$e->getMessage(), '','');
+        }     
+ 
     }
   }
   
@@ -249,9 +257,6 @@ function handle_xml_request($xml) {
         }elseif (empty($username) || empty($password)) { 
             $returnCode = 'A';
             $response_message = 'Username or password missing.';
-        } elseif (!is_email($userEmail)) { // Check if the userEmail is valid
-			$returnCode = 'E';
-			$response_message = 'Invalid email address.';
         } elseif (empty($returnURL)) {
             $returnCode = 'E';
             $response_message = 'Return URL is missing.';
@@ -401,21 +406,34 @@ function handle_cxml_request($cxml_body) {
         $userEmail = (string)$cxml->Request->PunchOutSetupRequest->Contact->Email;
         $returnURL = (string)$cxml->Request->PunchOutSetupRequest->BrowserFormPost->URL;
         $payloadID = (string)$cxml['payloadID'];
-        $version = (string)$cxml['version'];
-        $language = (string)$cxml['xml:lang'];
+        $version =  (string)$cxml['version'];
+        $language = (string) $cxml->attributes('xml', true)->lang;
 
         if (empty($returnURL)) {
             $returnCode = '400';
             $response_message = 'Return URL is missing.';
         } else{
                 /// Check if the user exists
-                if(trim($username) === ''){
+                if(!is_email($userEmail)){
+                    $returnCode = '400';
+                    $response_message = 'Invalid email address.';
+                }elseif (is_null($username) || is_null($password)) {
+                    $returnCode = '400';
+                    $response_message = 'Username or password missing.';
+                }elseif (empty($username) || empty($password)) { 
+                    $returnCode = '400';
+                    $response_message = 'Username or password missing.';
+                } elseif(trim($username) === ''){
                     $returnCode = '400';
                     $response_message = 'username is empty.';
                 }else if (!username_exists($username)) {
                     $returnCode = '400';
                     $response_message = 'User does not exist.';
-                    } else {
+                }elseif (empty($returnURL)) {
+                    $returnCode = '400';
+                    $response_message = 'Return URL is missing.';
+                }
+                 else {
                         $user = wp_authenticate($username, $password);
 
                             if (!is_wp_error($user)) {
@@ -462,7 +480,8 @@ function handle_cxml_request($cxml_body) {
         }
         
     } catch (Exception $e) {
-        $response_message = $e->getMessage();
+        $returnCode = '401';
+        $response_message = 'Authentication Failure';
     }
 
     // Assuming you have a function to generate cXML responses
@@ -695,9 +714,9 @@ function validate_session_key($session_key, $session_email) {
 }
 
 
-/*
+/* ////////////////////////////////////////////
 *             MULTIPLE CART FUNCTIOALITY
-*/
+*/ ////////////////////////////////////////////
 
 
 define('CM_CART_DATA_TABLE_VERSION', '1.0');
