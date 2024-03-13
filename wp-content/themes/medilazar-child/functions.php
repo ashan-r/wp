@@ -74,6 +74,56 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 
 
 /**
+* CM Session Table Creation Define Versioning 
+**/
+define('CM_SESSION_TABLE_VERSION', '1.0');
+define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
+
+
+/**
+ * Creates the cm_sessions table in the database if it doesn't exist or updates it if the version has changed.
+ *
+ * This function checks if the cm_sessions table exists in the database. If it does not, or if the
+ * version of the table has changed, it creates or updates the table accordingly. The table is used to
+ * store session information for users, including the session ID, user ID, session key, session email,
+ * creation time, and expiration time. The user ID is a foreign key that references the ID in the users table.
+ *
+ */
+function create_cm_session_table() {
+    global $wpdb;
+    $charset_collate = $wpdb->get_charset_collate();
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    
+    // Check if the table already exists
+    $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") == $table_name;
+
+    // Retrieve the currently installed version of the table, if any
+    $installed_ver = get_option(CM_SESSION_TABLE_VERSION_OPTION);
+
+    // Proceed if the table does not exist or if the version has changed
+    if (!$table_exists || $installed_ver != CM_SESSION_TABLE_VERSION) {
+        $sql = "CREATE TABLE $table_name (
+          session_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT UNSIGNED NOT NULL,
+          session_key VARCHAR(255) NOT NULL,
+          session_email VARCHAR(255) NOT NULL,
+          created_at DATETIME NOT NULL,
+          expires_at DATETIME NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES {$wpdb->prefix}users(ID) ON DELETE CASCADE
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+
+        // Update the version in the database
+        update_option(CM_SESSION_TABLE_VERSION_OPTION, CM_SESSION_TABLE_VERSION);
+    }
+}
+
+// setup the cm_sesisons table
+add_action('after_setup_theme', 'create_cm_session_table');
+
+/**
  * Registers a custom REST API route for punchout login.
  *
  * Adds a new route to the WordPress REST API under the 'comercialmedica/v1' namespace. The route
@@ -548,55 +598,6 @@ add_filter('login_message', 'cm_login_error_message');
 
 
 /**
-* CM Session Table Creation Define Versioning 
-**/
-define('CM_SESSION_TABLE_VERSION', '1.0');
-define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
-
-
-/**
- * Creates the cm_sessions table in the database if it doesn't exist or updates it if the version has changed.
- *
- * This function checks if the cm_sessions table exists in the database. If it does not, or if the
- * version of the table has changed, it creates or updates the table accordingly. The table is used to
- * store session information for users, including the session ID, user ID, session key, session email,
- * creation time, and expiration time. The user ID is a foreign key that references the ID in the users table.
- *
- */
-function create_cm_session_table() {
-    global $wpdb;
-    $charset_collate = $wpdb->get_charset_collate();
-    $table_name = $wpdb->prefix . 'cm_sessions';
-    
-    // Check if the table already exists
-    $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") == $table_name;
-
-    // Retrieve the currently installed version of the table, if any
-    $installed_ver = get_option(CM_SESSION_TABLE_VERSION_OPTION);
-
-    // Proceed if the table does not exist or if the version has changed
-    if (!$table_exists || $installed_ver != CM_SESSION_TABLE_VERSION) {
-        $sql = "CREATE TABLE $table_name (
-          session_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-          user_id BIGINT UNSIGNED NOT NULL,
-          session_key VARCHAR(255) NOT NULL,
-          session_email VARCHAR(255) NOT NULL,
-          created_at DATETIME NOT NULL,
-          expires_at DATETIME NOT NULL,
-          FOREIGN KEY (user_id) REFERENCES {$wpdb->prefix}users(ID) ON DELETE CASCADE
-        ) $charset_collate;";
-
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
-
-        // Update the version in the database
-        update_option(CM_SESSION_TABLE_VERSION_OPTION, CM_SESSION_TABLE_VERSION);
-    }
-}
-
-add_action('after_setup_theme', 'create_cm_session_table');
-
-/**
  * Validates a session key and email combination.
  *
  * Checks if the given session key and email correspond to a valid session in the database
@@ -629,4 +630,98 @@ function validate_session_key($session_key, $session_email) {
 
     // Invalid session
     return false;
+}
+
+
+/*
+*             MULTIPLE CART FUNCTIOALITY
+*/
+
+
+define('CM_CART_DATA_TABLE_VERSION', '1.0');
+define('CM_CART_DATA_TABLE_VERSION_OPTION', 'cm_cart_data_table_version');
+
+/**
+ * Creates or updates the cm_cart_data table.
+ *
+ * This function checks the currently installed version of the cm_cart_data table against 
+ * a defined constant for the desired table version (CM_CART_DATA_TABLE_VERSION). If the installed
+ * version is different from the desired version, or if the table does not exist, the function 
+ * will create or update the table to match the structure defined within the function.
+ *
+ * The cm_cart_data table stores cart data associated with specific sessions, allowing for
+ * multiple carts functionality. It includes fields for a unique cart identifier (cart_id),
+ * a reference to the session ID (session_id), cart data in a longtext format (cart_data),
+ * and timestamps for creation and last update.
+ *
+ * Upon successful creation or update, the function updates a WordPress option to the current
+ * version of the table structure, ensuring that the check and update process only runs when necessary.
+ *
+ */
+function create_cm_cart_data_table() {
+    global $wpdb;
+    $charset_collate = $wpdb->get_charset_collate();
+    $table_name = $wpdb->prefix . 'cm_cart_data';
+
+    // Check the current installed version
+    $installed_ver = get_option(CM_CART_DATA_TABLE_VERSION_OPTION);
+
+    if ($installed_ver != CM_CART_DATA_TABLE_VERSION) {
+        // SQL to create or update the table
+        $sql = "CREATE TABLE $table_name (
+          cart_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          session_id BIGINT UNSIGNED NOT NULL,
+          cart_data LONGTEXT NOT NULL,
+          created_at DATETIME NOT NULL,
+          updated_at DATETIME NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES {$wpdb->prefix}cm_sessions(session_id) ON DELETE CASCADE
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+
+        // Update the version in the database
+        update_option(CM_CART_DATA_TABLE_VERSION_OPTION, CM_CART_DATA_TABLE_VERSION);
+    }
+}
+
+// create or update cart_data table after theme loads
+add_action('init', 'create_cm_cart_data_table');
+
+
+function is_session_specific_user() {
+    // Example of checking for a session-specific key
+    if (isset($_COOKIE['session_key']) && !empty($_COOKIE['session_key'])) {
+        return true; // This is a session-specific user
+    }
+    return false; // This is a normal user
+}
+
+
+add_action('woocommerce_add_to_cart', 'custom_handle_add_to_cart', 10, 6);
+function custom_handle_add_to_cart($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data) {
+    if (is_session_specific_user()) {
+        // Handle add to cart for session-specific user
+        // You may need to update session-specific cart data in the wp_cm_cart_data table
+    }
+    // Otherwise, proceed with normal WooCommerce add to cart operation
+}
+
+// Implement similar hooks for cart item removal, cart updates, etc.
+
+add_filter('woocommerce_get_cart_contents', 'custom_get_cart_contents');
+function custom_get_cart_contents($cart_contents) {
+    if (is_session_specific_user()) {
+        // Fetch session-specific cart data
+        // Modify $cart_contents based on session-specific cart data
+    }
+    return $cart_contents;
+}
+
+
+add_action('woocommerce_checkout_create_order', 'custom_checkout_create_order', 10, 2);
+function custom_checkout_create_order($order, $data) {
+    if (is_session_specific_user()) {
+        // Modify the order based on session-specific cart data
+    }
 }
