@@ -68,6 +68,8 @@ function cm_woocommerce_add_to_cart_button_text_single() {
 }
 add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_to_cart_button_text_single' ); 
 
+
+
 /*
 /////////////  Punchout XML Processing   ///////////////////////
 */
@@ -76,7 +78,7 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 /**
 * CM Session Table Creation Define Versioning 
 **/
-define('CM_SESSION_TABLE_VERSION', '1.0');
+define('CM_SESSION_TABLE_VERSION', '1.2');
 define('CM_SESSION_TABLE_VERSION_OPTION', 'cm_session_table_version');
 
 
@@ -94,6 +96,9 @@ function create_cm_session_table() {
     $charset_collate = $wpdb->get_charset_collate();
     $table_name = $wpdb->prefix . 'cm_sessions';
     
+    // Define current version
+    define('CURRENT_CM_SESSION_TABLE_VERSION', '1.3'); // Update this as you release new versions
+
     // Check if the table already exists
     $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") == $table_name;
 
@@ -101,8 +106,8 @@ function create_cm_session_table() {
     $installed_ver = get_option(CM_SESSION_TABLE_VERSION_OPTION);
 
     // Proceed if the table does not exist or if the version has changed
-    if (!$table_exists || $installed_ver != CM_SESSION_TABLE_VERSION) {
-        $sql = "CREATE TABLE $table_name (
+    if (!$table_exists || $installed_ver != CURRENT_CM_SESSION_TABLE_VERSION) {
+        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
           session_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
           user_id BIGINT UNSIGNED NOT NULL,
           session_key VARCHAR(255) NOT NULL,
@@ -115,10 +120,17 @@ function create_cm_session_table() {
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
 
-        // Update the version in the database
-        update_option(CM_SESSION_TABLE_VERSION_OPTION, CM_SESSION_TABLE_VERSION);
+        // Update version and apply changes based on version
+        if ($installed_ver < CURRENT_CM_SESSION_TABLE_VERSION) {
+            $wpdb->query("ALTER TABLE $table_name ADD COLUMN session_status VARCHAR(255) NULL;");
+        }
+        // For each new version, add additional conditional blocks here.
+
+        // Update the version in the database to the current version after all updates
+        update_option(CM_SESSION_TABLE_VERSION_OPTION, CURRENT_CM_SESSION_TABLE_VERSION);
     }
 }
+
 
 // setup the cm_sesisons table
 add_action('after_setup_theme', 'create_cm_session_table');
@@ -580,6 +592,8 @@ function get_cm_session_expires_at($session_key) {
     return $expires_at;
 }
 
+define('ENCRYPTION_KEY', base64_decode('XOyFM2ZvbUisqHNRIuN8T9NAH4Rs4lRZZBWVT8VTDZE='));
+define('ENCRYPTION_IV', base64_decode('YB17YDcsMEScOAMu64UPhw==')); 
 /**
  * Logs in a user based on session key and email passed via URL parameters.
  *
@@ -594,9 +608,14 @@ function cm_login_user_with_url_session_key() {
 
 	$session_key = sanitize_text_field($_GET['sessionKey']);
 	$session_email = sanitize_email($_GET['userEmail']);
-
     $user_id = validate_session_key($session_key, $session_email);
 
+    // Encrypt the session key before setting it as a cookie value
+    $encrypted_session_key = openssl_encrypt($session_key, 'aes-256-cbc', ENCRYPTION_KEY, 0, ENCRYPTION_IV);
+    if ($encrypted_session_key === false) {
+       throw new Exception('Encryption failed');
+    }
+       
     if ($user_id) {
 
         $expires_at = get_cm_session_expires_at($session_key);
@@ -608,8 +627,9 @@ function cm_login_user_with_url_session_key() {
             // The session key is valid, and we have a user ID, so log the user in
             wp_set_current_user($user_id);
             wp_set_auth_cookie($user_id);
+
             // Set the session cookie
-            set_cm_session_cookie($session_key,$expiration_period);
+            set_cm_session_cookie($encrypted_session_key,$expiration_period);
             // Redirect to the homepage on Login Success
             wp_redirect(home_url());
             exit;
@@ -618,8 +638,7 @@ function cm_login_user_with_url_session_key() {
             // Redirect to the WordPress main URL
             wp_redirect(home_url());
             exit;
-        }
-           
+        }           
        
     } else {
 		wp_logout();
@@ -640,20 +659,21 @@ function cm_login_user_with_url_session_key() {
  * @param bool $httponly When TRUE the cookie will be made accessible only through the HTTP protocol.
  * @param string $samesite Prevents the browser from sending this cookie along with cross-site requests.
  */
-function set_cm_session_cookie($session_key, $expiration_period = 86400, $path = '/', $secure = true, $httponly = false, $samesite = 'Lax') {
+function set_cm_session_cookie($encrypted_session_key, $expiration_period = 86400, $path = '/', $secure = true, $httponly = true, $samesite = 'Lax') {
     $cookie_name = 'cm_session_key';
-    $cookie_value = $session_key;
+    
+    $cookie_value = $encrypted_session_key;
     $expiration = time() + $expiration_period;
     
-        setcookie($cookie_name, $cookie_value, [
-            'expires' => $expiration,
-            'path' => $path,
-            'secure' => $secure,
-            'httponly' => $httponly,
-            'samesite' => $samesite
-        ]);
-
+    setcookie($cookie_name, $cookie_value, [
+        'expires' => $expiration,
+        'path' => $path,
+        'secure' => $secure,
+        'httponly' => $httponly,
+        'samesite' => $samesite
+    ]);
 }
+
 
 
 add_action('init', 'cm_login_user_with_url_session_key');
@@ -719,7 +739,7 @@ function validate_session_key($session_key, $session_email) {
 */ ////////////////////////////////////////////
 
 
-define('CM_CART_DATA_TABLE_VERSION', '1.0');
+define('CM_CART_DATA_TABLE_VERSION', '1.2');
 define('CM_CART_DATA_TABLE_VERSION_OPTION', 'cm_cart_data_table_version');
 
 /**
@@ -771,11 +791,18 @@ add_action('init', 'create_cm_cart_data_table');
 
 
 function is_session_specific_user() {
-    // Example of checking for a session-specific key
     if (isset($_COOKIE['cm_session_key']) && !empty($_COOKIE['cm_session_key'])) {
-        return true; // This is a session-specific user
+        $session_key = sanitize_text_field($_COOKIE['cm_session_key']);
+        
+        if (validate_session_key_format($session_key)) {
+            return true; // This is a session-specific user
+        }
     }
     return false; // This is a normal user
+}
+
+function validate_session_key_format($session_key) {
+    return strlen($session_key) === 20;
 }
 
 
