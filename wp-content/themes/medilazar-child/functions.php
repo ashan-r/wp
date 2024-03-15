@@ -887,21 +887,103 @@ add_action('init', 'create_cm_cart_data_table');
 
 
 add_action('woocommerce_add_to_cart', 'custom_handle_add_to_cart', 10, 6);
-function custom_handle_add_to_cart($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data) {
+
+/**
+ * Handles adding products to the cart for session-specific users by updating their
+ * cart data in the custom 'wp_cm_cart_data' table and logs the process.
+ *
+ * For users identified as session-specific through the `is_session_specific_user` check,
+ * this function retrieves the session key, decodes and decrypts it, then serializes the
+ * current cart data and updates or inserts it into the 'wp_cm_cart_data' table based on
+ * the session ID linked to the session key. It logs each significant step of the process
+ * and any errors encountered. If the operation is not triggered via AJAX, it redirects
+ * the user to the WooCommerce cart page to prevent the default session cart handling.
+ *
+ * Logging is performed via WC_Logger for monitoring and debugging purposes.
+ */
+
+
+function custom_handle_add_to_cart(  ) {
+    $logger = wc_get_logger();
+    $context = array( 'source' => 'custom_handle_add_to_cart' );
+
+    $logger->info( 'Function started.', $context );
+
     if (is_session_specific_user()) {
-        // Handle add to cart for session-specific user
-        // You may need to update session-specific cart data in the wp_cm_cart_data table
+        global $woocommerce, $wpdb;
+        $session_key = get_session_key_from_cookie(); // Assume this function retrieves and validates the session key
+
+        if ( $session_key ) {
+            $logger->info( "Session key retrieved: {$session_key}", $context );
+        } else {
+            $logger->error( 'Failed to retrieve session key.', $context );
+            return;
+        }
+
+        // Serialize cart data
+        $cart_data = serialize($woocommerce->cart->get_cart());
+
+        // Insert or update the cart data in wp_cm_cart_data table
+        $table_name = $wpdb->prefix . 'cm_cart_data';
+        $session_id = get_session_id_by_key($session_key); // Assume this function gets the session ID from the session key
+
+
+        if ( $session_id ) {
+            $logger->info( "Session ID retrieved: {$session_id}", $context );
+        } else {
+            $logger->error( 'Failed to retrieve session ID.', $context );
+            return;
+        }
+
+        $result = $wpdb->replace(
+            $table_name,
+            array(
+                'session_id' => $session_id,
+                'cart_data' => $cart_data,
+                'created_at' => current_time('mysql', 1), // Use GMT time
+                'updated_at' => current_time('mysql', 1) // Use GMT time
+            ),
+            array(
+                '%d',
+                '%s',
+                '%s',
+                '%s'
+            )
+        );
+
+        if ( false === $result ) {
+            $logger->error( 'Database operation failed.', $context );
+        } else {
+            $logger->info( 'Database operation succeeded.', $context );
+        }
+
+
+        // Prevent WooCommerce from adding the product to the default session cart
+        if (!defined('DOING_AJAX') || !DOING_AJAX) {
+            wp_redirect(wc_get_cart_url());
+            exit;
+        }
     }
-    // Otherwise, proceed with normal WooCommerce add to cart operation
 }
+
 
 // Implement similar hooks for cart item removal, cart updates, etc.
 
 add_filter('woocommerce_get_cart_contents', 'custom_get_cart_contents');
 function custom_get_cart_contents($cart_contents) {
     if (is_session_specific_user()) {
-        // Fetch session-specific cart data
-        // Modify $cart_contents based on session-specific cart data
+        global $wpdb;
+        $session_key = get_session_key_from_cookie();
+
+        // Query the cart data from wp_cm_cart_data table
+        $session_id = get_session_id_by_key($session_key);
+        $table_name = $wpdb->prefix . 'cm_cart_data';
+        $cart_data = $wpdb->get_var($wpdb->prepare("SELECT cart_data FROM $table_name WHERE session_id = %d", $session_id));
+
+        if (!empty($cart_data)) {
+            // Replace WooCommerce cart contents with session-specific cart data
+            $cart_contents = unserialize($cart_data);
+        }
     }
     return $cart_contents;
 }
@@ -910,6 +992,111 @@ function custom_get_cart_contents($cart_contents) {
 add_action('woocommerce_checkout_create_order', 'custom_checkout_create_order', 10, 2);
 function custom_checkout_create_order($order, $data) {
     if (is_session_specific_user()) {
-        // Modify the order based on session-specific cart data
+        global $wpdb;
+        $session_key = get_session_key_from_cookie();
+        $session_id = get_session_id_by_key($session_key);
+        $table_name = $wpdb->prefix . 'cm_cart_data';
+        $cart_data = $wpdb->get_var($wpdb->prepare("SELECT cart_data FROM $table_name WHERE session_id = %d", $session_id));
+
+        if (!empty($cart_data)) {
+            // You might need to adjust order items based on the serialized cart data
+            // This part depends on how you want to handle session-specific order creation
+        }
+    }
+}
+
+
+
+
+
+
+/**
+ * Retrieves and decrypts the session key stored in the 'cm_session_key' cookie.
+ *
+ * This function looks for the 'cm_session_key' cookie, which is expected to contain an
+ * encrypted session key. The session key is encrypted using AES-256-CBC algorithm and is
+ * base64-encoded. The encoded string includes both the initialization vector (IV) and the
+ * encrypted session key. This function extracts the IV and the encrypted session key, decrypts
+ * it using the same algorithm and the predefined ENCRYPTION_KEY, and returns the decrypted
+ * session key.
+ *
+ * Preconditions:
+ * - The 'cm_session_key' cookie must be present and contain the base64-encoded data.
+ * - ENCRYPTION_KEY constant must be defined and hold the encryption key used to encrypt the session key.
+ *
+ * @return mixed The decrypted session key if successful, or false if the cookie is not set, decryption fails,
+ *               or any other issue occurs during the process. Typically returns a string (decrypted session key)
+ *               or boolean false on failure.
+ *
+ */
+
+
+function get_session_key_from_cookie() {
+    if (!isset($_COOKIE['cm_session_key'])) {
+        return false;
+    }
+
+    $encodedData = $_COOKIE['cm_session_key'];
+    $combinedData = base64_decode($encodedData);
+
+    $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+    $iv = substr($combinedData, 0, $ivLength);
+    $encryptedSessionKey = substr($combinedData, $ivLength);
+
+    $decryptedSessionKey = openssl_decrypt($encryptedSessionKey, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+
+    if ($decryptedSessionKey === false) {
+        return false; // Decryption failed
+    }
+
+    return $decryptedSessionKey;
+}
+
+
+/**
+ * Retrieves the session ID associated with a given session key from the database.
+ *
+ * This function queries the custom session table (`wp_cm_sessions`) in the WordPress database
+ * to find the session ID corresponding to the provided session key. The table structure is assumed
+ * to have at least two columns: `session_id` and `session_key`. This function is particularly useful
+ * in custom session management scenarios, where each unique session key is associated with a specific
+ * session ID, allowing for the tracking and management of custom session data.
+ *
+ * @param string $session_key The session key for which to retrieve the associated session ID.
+ * @return mixed The session ID if found, or false if no matching session is found. The return type
+ *               is mixed, typically an integer for the session ID or boolean false on failure.
+ *
+ * Usage example:
+ * $session_id = get_session_id_by_key($session_key);
+ * if ($session_id) {
+ *     // Proceed with operations that require the session ID
+ * } else {
+ *     // Handle the case where no session is found
+ * }
+ */
+
+function get_session_id_by_key($session_key) {
+    global $wpdb;
+    
+    // Assuming your sessions table is named 'wp_cm_sessions' and has columns 'session_id' and 'session_key'
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    $query = $wpdb->prepare("SELECT session_id FROM $table_name WHERE session_key = %s LIMIT 1", $session_key);
+    $session_id = $wpdb->get_var($query);
+
+    if (empty($session_id)) {
+        return false; // No matching session found
+    }
+
+    return $session_id;
+}
+
+
+add_action('wp_logout', 'clear_cm_session_key_cookie');
+
+function clear_cm_session_key_cookie() {
+    // Check if the cookie exists
+    if (isset($_COOKIE['cm_session_key'])) {
+        // Clear the cookie by setting its expiration time to the past
+        setcookie('cm_session_key', '', time() - 3600, '/');
     }
 }
