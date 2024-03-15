@@ -70,9 +70,9 @@ add_filter( 'woocommerce_product_single_add_to_cart_text', 'cm_woocommerce_add_t
 
 
 
-/*
+/*/////////////////////////////////////////////////////////////////
 /////////////  Punchout XML Processing   ///////////////////////
-*/
+*/////////////////////////////////////////////////////////////////
 
 
 /**
@@ -142,6 +142,7 @@ add_action('after_setup_theme', 'create_cm_session_table');
  * '/punchout_login' accepts POST requests and uses the 'handle_xml_request' function as
  * its callback to process the request.
  */
+
 add_action('rest_api_init', function () {
     register_rest_route('comercialmedica/v1', '/punchout_login', array(
         'methods' => 'POST',
@@ -336,7 +337,10 @@ function handle_xml_request($xml) {
 
     // Generate and return the XML response
     $response_xml = generate_xml_response($response_data);
-    return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
+   // return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
+   header('Content-Type: application/xml; charset=utf-8');
+   echo $response_xml;
+   return;
 }
 
 
@@ -349,6 +353,7 @@ function handle_xml_request($xml) {
  * a loginURL element with a CDATA section containing the URL.
  *
  */
+
 function generate_xml_response($response_data) {
     $dom = new DOMDocument('1.0', 'UTF-8');
     $dom->formatOutput = true;
@@ -399,6 +404,7 @@ function generate_xml_response($response_data) {
  *
  *
  */
+
 function handle_cxml_request($cxml_body) {
     global $wpdb; // Access the WordPress DB
 
@@ -498,7 +504,10 @@ function handle_cxml_request($cxml_body) {
 
     // Assuming you have a function to generate cXML responses
     $response_cxml = generate_cxml_response($returnCode, $response_message, html_entity_decode($loginURL),$payloadID, $language, $version);
-    return new WP_REST_Response($response_cxml, $returnCode, ['Content-Type' => 'text/xml']);
+    //return new WP_REST_Response($response_cxml, $returnCode, ['Content-Type' => 'text/xml']);
+    header('Content-Type: application/xml; charset=utf-8');
+	echo $response_cxml;
+	return;
 }
 
 /**
@@ -554,7 +563,10 @@ function generate_cxml_response($returnCode, $response_message, $loginURL, $payl
 
 function cxml_failure_response($returnCode, $response_message, $loginURL, $payloadIDFromRequest){
     $response_cxml = generate_cxml_response($returnCode, $response_message, html_entity_decode($loginURL),$payloadIDFromRequest);
-    return new WP_REST_Response($response_cxml, $returnCode, ['Content-Type' => 'text/xml']);
+   // return new WP_REST_Response($response_cxml, $returnCode, ['Content-Type' => 'application/xml']);
+    header('Content-Type: application/xml; charset=utf-8');
+	echo $response_cxml;
+	return;
 }
 
 function xml_error_response($returnCode, $response_message){
@@ -566,7 +578,10 @@ function xml_error_response($returnCode, $response_message){
 
 
     $response_xml = generate_xml_response($response_data);
-    return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
+   // return new WP_REST_Response($response_xml, 200, ['Content-Type' => 'application/xml']);
+   header('Content-Type: application/xml; charset=utf-8');
+   echo $response_xml;
+   return;
 }
 
 
@@ -593,7 +608,7 @@ function get_cm_session_expires_at($session_key) {
 }
 
 define('ENCRYPTION_KEY', base64_decode('XOyFM2ZvbUisqHNRIuN8T9NAH4Rs4lRZZBWVT8VTDZE='));
-define('ENCRYPTION_IV', base64_decode('YB17YDcsMEScOAMu64UPhw==')); 
+
 /**
  * Logs in a user based on session key and email passed via URL parameters.
  *
@@ -609,14 +624,22 @@ function cm_login_user_with_url_session_key() {
 	$session_key = sanitize_text_field($_GET['sessionKey']);
 	$session_email = sanitize_email($_GET['userEmail']);
     $user_id = validate_session_key($session_key, $session_email);
-
-    // Encrypt the session key before setting it as a cookie value
-    $encrypted_session_key = openssl_encrypt($session_key, 'aes-256-cbc', ENCRYPTION_KEY, 0, ENCRYPTION_IV);
-    if ($encrypted_session_key === false) {
-       throw new Exception('Encryption failed');
-    }
-       
+     
     if ($user_id) {
+
+        // Generate a dynamic IV for each encryption
+         $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
+
+        // Encrypt the session key with dynamic IV
+        $encrypted_session_key = openssl_encrypt($session_key, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+
+        if ($encrypted_session_key === false) {
+            throw new Exception('Encryption failed');
+        }
+
+        // Prepend the IV to the encrypted session key and base64-encode the entire string
+        $encrypted_session_key_with_iv = base64_encode($iv . $encrypted_session_key);
+
 
         $expires_at = get_cm_session_expires_at($session_key);
         $expires_at_timestamp = strtotime($expires_at);
@@ -629,7 +652,7 @@ function cm_login_user_with_url_session_key() {
             wp_set_auth_cookie($user_id);
 
             // Set the session cookie
-            set_cm_session_cookie($encrypted_session_key,$expiration_period);
+            set_cm_session_cookie($encrypted_session_key_with_iv,$expiration_period);
             // Redirect to the homepage on Login Success
             wp_redirect(home_url());
             exit;
@@ -659,10 +682,10 @@ function cm_login_user_with_url_session_key() {
  * @param bool $httponly When TRUE the cookie will be made accessible only through the HTTP protocol.
  * @param string $samesite Prevents the browser from sending this cookie along with cross-site requests.
  */
-function set_cm_session_cookie($encrypted_session_key, $expiration_period = 86400, $path = '/', $secure = true, $httponly = true, $samesite = 'Lax') {
+function set_cm_session_cookie($encrypted_session_key_with_iv, $expiration_period = 86400, $path = '/', $secure = true, $httponly = true, $samesite = 'Lax') {
     $cookie_name = 'cm_session_key';
     
-    $cookie_value = $encrypted_session_key;
+    $cookie_value = $encrypted_session_key_with_iv;
     $expiration = time() + $expiration_period;
     
     setcookie($cookie_name, $cookie_value, [
@@ -672,6 +695,28 @@ function set_cm_session_cookie($encrypted_session_key, $expiration_period = 8640
         'httponly' => $httponly,
         'samesite' => $samesite
     ]);
+}
+
+
+function getAndDecryptSessionKeyFromCookie($cookieName = 'cm_session_key') {
+    if (!isset($_COOKIE[$cookieName])) {
+        return false; // Cookie not set
+    }
+
+    $encodedData = $_COOKIE[$cookieName];
+    $combinedData = base64_decode($encodedData);
+
+    $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+    $iv = substr($combinedData, 0, $ivLength);
+    $encryptedSessionKey = substr($combinedData, $ivLength);
+
+    $decryptedSessionKey = openssl_decrypt($encryptedSessionKey, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+
+    if ($decryptedSessionKey === false) {
+        throw new Exception('Decryption failed');
+    }
+
+    return $decryptedSessionKey;
 }
 
 
@@ -734,6 +779,56 @@ function validate_session_key($session_key, $session_email) {
 }
 
 
+function validateSessionCookieKey($sessionKey) {
+    
+    if (strlen($sessionKey) != 20) { // Assuming session keys are 20 characters long
+        return false;
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'cm_sessions';
+    $current_time = current_time('mysql');
+
+    $session = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $table_name WHERE session_key = %s AND expires_at > %s",
+        $sessionKey,
+        $current_time
+    ));
+
+    if (null !== $session) {
+        // Session is valid
+        return $session->user_id;
+    }else{
+        return false;
+    }
+}
+
+
+
+function is_session_specific_user() {
+
+    $decryptedSessionKey = getAndDecryptSessionKeyFromCookie();
+
+
+    if (isset($_COOKIE['cm_session_key']) && !empty($_COOKIE['cm_session_key'])) {
+        $session_key = sanitize_text_field($_COOKIE['cm_session_key']);
+        
+        if (validate_session_key_format($session_key)) {
+            if ($decryptedSessionKey && validateSessionCookieKey($decryptedSessionKey)) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+    }
+    return false; // This is a normal user
+}
+
+function validate_session_key_format($session_key) {
+    return strlen($session_key) === 20;
+}
+
+
 /* ////////////////////////////////////////////
 *             MULTIPLE CART FUNCTIOALITY
 */ ////////////////////////////////////////////
@@ -789,21 +884,6 @@ function create_cm_cart_data_table() {
 // create or update cart_data table after theme loads
 add_action('init', 'create_cm_cart_data_table');
 
-
-function is_session_specific_user() {
-    if (isset($_COOKIE['cm_session_key']) && !empty($_COOKIE['cm_session_key'])) {
-        $session_key = sanitize_text_field($_COOKIE['cm_session_key']);
-        
-        if (validate_session_key_format($session_key)) {
-            return true; // This is a session-specific user
-        }
-    }
-    return false; // This is a normal user
-}
-
-function validate_session_key_format($session_key) {
-    return strlen($session_key) === 20;
-}
 
 
 add_action('woocommerce_add_to_cart', 'custom_handle_add_to_cart', 10, 6);
