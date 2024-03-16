@@ -804,16 +804,38 @@ function validateSessionCookieKey($sessionKey) {
 }
 
 
-
+/**
+ * Determines if the current user is identified as a session-specific user based on a session key.
+ *
+ * This function checks for the presence of a 'cm_session_key' cookie, which is expected
+ * to store an encrypted session key for session-specific users. If the cookie exists and is not empty,
+ * the function proceeds to decrypt the session key using `getAndDecryptSessionKeyFromCookie()`. 
+ * After decryption, it validates the format of the decrypted session key with `validate_session_key_format()`.
+ * If the format is valid, it further validates the session key with `validateSessionCookieKey()`.
+ *
+ * If all checks pass (the cookie exists, the session key decrypts successfully, and passes format and
+ * validation checks), the function concludes that the user is session-specific and returns true.
+ * Otherwise, it returns false, indicating the user is a normal user or the session key is invalid.
+ *
+ * @return bool True if the user is session-specific based on a valid, decrypted, and formatted session key; 
+ *              false otherwise.
+ *
+ * Note:
+ * - `getAndDecryptSessionKeyFromCookie()`: Assumes this function retrieves, decrypts, and returns 
+ *    the session key from the 'cm_session_key' cookie.
+ * - `validate_session_key_format()`: Assumes this function checks the decrypted session key's format 
+ *    to meet specific criteria (e.g., length, characters).
+ * - `validateSessionCookieKey()`: Further validates the session key, possibly against a database 
+ *    or other criteria, to ensure it's active or recognized.
+ */
 function is_session_specific_user() {
 
     $decryptedSessionKey = getAndDecryptSessionKeyFromCookie();
 
 
     if (isset($_COOKIE['cm_session_key']) && !empty($_COOKIE['cm_session_key'])) {
-        $session_key = sanitize_text_field($_COOKIE['cm_session_key']);
-        
-        if (validate_session_key_format($session_key)) {
+       
+        if (validate_session_key_format($decryptedSessionKey)) {
             if ($decryptedSessionKey && validateSessionCookieKey($decryptedSessionKey)) {
                 return true;
             } else {
@@ -903,37 +925,19 @@ add_action('woocommerce_add_to_cart', 'custom_handle_add_to_cart', 10, 6);
  */
 
 
-function custom_handle_add_to_cart(  ) {
-    $logger = wc_get_logger();
-    $context = array( 'source' => 'custom_handle_add_to_cart' );
+function custom_handle_add_to_cart( $cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data  ) {
 
-    $logger->info( 'Function started.', $context );
 
     if (is_session_specific_user()) {
         global $woocommerce, $wpdb;
         $session_key = get_session_key_from_cookie(); // Assume this function retrieves and validates the session key
-
-        if ( $session_key ) {
-            $logger->info( "Session key retrieved: {$session_key}", $context );
-        } else {
-            $logger->error( 'Failed to retrieve session key.', $context );
-            return;
-        }
 
         // Serialize cart data
         $cart_data = serialize($woocommerce->cart->get_cart());
 
         // Insert or update the cart data in wp_cm_cart_data table
         $table_name = $wpdb->prefix . 'cm_cart_data';
-        $session_id = get_session_id_by_key($session_key); // Assume this function gets the session ID from the session key
-
-
-        if ( $session_id ) {
-            $logger->info( "Session ID retrieved: {$session_id}", $context );
-        } else {
-            $logger->error( 'Failed to retrieve session ID.', $context );
-            return;
-        }
+        $session_id = get_session_id_by_key($session_key); // this function gets the session ID from the session key
 
         $result = $wpdb->replace(
             $table_name,
@@ -952,9 +956,13 @@ function custom_handle_add_to_cart(  ) {
         );
 
         if ( false === $result ) {
-            $logger->error( 'Database operation failed.', $context );
+            error_log('DB FAILED.');
+            $product = wc_get_product($product_id);
+            $product_name = $product ? $product->get_name() : 'Unknown Product';
+            $log_message = sprintf('Added to cart for session-specific user (Session ID: %s): Product ID: %s, Name: %s, Quantity: %s', $session_id, $product_id, $product_name, $quantity);
+            error_log($log_message);
         } else {
-            $logger->info( 'Database operation succeeded.', $context );
+            error_log('DB SUCCESS.');
         }
 
 
@@ -963,6 +971,8 @@ function custom_handle_add_to_cart(  ) {
             wp_redirect(wc_get_cart_url());
             exit;
         }
+    }else{
+        error_log('NOT SESSION SPECIFIC USER');
     }
 }
 
@@ -1066,13 +1076,6 @@ function get_session_key_from_cookie() {
  * @return mixed The session ID if found, or false if no matching session is found. The return type
  *               is mixed, typically an integer for the session ID or boolean false on failure.
  *
- * Usage example:
- * $session_id = get_session_id_by_key($session_key);
- * if ($session_id) {
- *     // Proceed with operations that require the session ID
- * } else {
- *     // Handle the case where no session is found
- * }
  */
 
 function get_session_id_by_key($session_key) {
